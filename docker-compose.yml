@@ -1,0 +1,46 @@
+# Development infrastructure only.
+#
+# Phase 1 deliberately containerises just the dependencies a developer cannot
+# trivially run on the host (PostgreSQL, Redis). The application itself runs on
+# the host via `npm run dev:backend` / `npm run dev:frontend` for fast feedback.
+# Multi-stage app images, Nginx and the multi-instance topology arrive in Phase 12.
+
+name: collab-editor
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: collab-editor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-collab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-collab_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-collab_editor}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-collab} -d ${POSTGRES_DB:-collab_editor}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: collab-editor-redis
+    restart: unless-stopped
+    # Persistence is intentionally off: Redis holds Pub/Sub traffic, rate-limit
+    # counters, refresh sessions and WS tickets — never durable document state.
+    command: ['redis-server', '--appendonly', 'no', '--save', '']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres-data:

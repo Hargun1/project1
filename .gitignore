@@ -1,0 +1,21 @@
+# ── Dependencies / build output ────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vite/
+
+# ── Secrets: the real .env is never committed, only .env.example ───────────────
+.env
+.env.*
+!.env.example
+
+# ── Logs / OS / editor ────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

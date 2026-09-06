@@ -1,0 +1,19 @@
+@import 'tailwindcss';
+
+/* Editor-style dark surface by default; Phase 15 owns the full design pass. */
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    sans-serif;
+}

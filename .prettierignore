@@ -1,0 +1,8 @@
+node_modules/
+dist/
+build/
+coverage/
+package-lock.json.bak
+backend/prisma/migrations/**/*.sql.bak
+*.tsbuildinfo
+.vite/

@@ -1,0 +1,106 @@
+// Prisma schema — see docs/database.md for the reasoning behind each decision.
+//
+// Table/column names are snake_case (`@@map` / `@map`) to match the SQL
+// conventions in the specification, while the TypeScript client stays camelCase.
+//
+// Every DateTime is `@db.Timestamptz(3)`. Prisma's default for DateTime is
+// `timestamp(3)` — WITHOUT time zone — which stores a wall-clock reading with no
+// record of the offset it was taken in. Collaborators are in different zones, so
+// "who edited this first" would depend on where the writer was sitting.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Mirrors the `Role` union exported from @collab/shared.
+enum Role {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @db.VarChar(100)
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  ownedDocuments   Document[]         @relation("DocumentOwner")
+  memberships      DocumentMember[]
+  createdRevisions DocumentRevision[]
+
+  @@map("users")
+}
+
+model Document {
+  id       String @id @default(uuid()) @db.Uuid
+  ownerId  String @map("owner_id") @db.Uuid
+  name     String @db.VarChar(255)
+  language String @db.VarChar(32)
+
+  /// Soft delete: revisions and membership history survive a "deleted" document.
+  /// Every read path must filter on `deletedAt: null`.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner     User               @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   DocumentMember[]
+  revisions DocumentRevision[]
+
+  // Dashboard queries: "documents I own", "sorted by recently edited",
+  // "filtered by language" — all with deleted rows excluded.
+  @@index([ownerId, deletedAt])
+  @@index([updatedAt(sort: Desc)])
+  @@index([language])
+  @@map("documents")
+}
+
+model DocumentMember {
+  documentId String   @map("document_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  role       Role
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Composite primary key gives the (document_id, user_id) uniqueness the spec
+  // requires, and is also the exact lookup an authorization check performs.
+  @@id([documentId, userId])
+  // Reverse direction: "documents shared with me".
+  @@index([userId])
+  @@map("document_members")
+}
+
+model DocumentRevision {
+  id         String @id @default(uuid()) @db.Uuid
+  documentId String @map("document_id") @db.Uuid
+
+  /// Nullable so revision history outlives the account that created it.
+  createdById String? @map("created_by") @db.Uuid
+
+  /// Binary `Y.encodeStateAsUpdate()` output — NOT rendered text. Plain text
+  /// discards the CRDT metadata (tombstones, client IDs) that makes a restore
+  /// converge correctly.
+  snapshot Bytes
+
+  revisionNumber Int      @map("revision_number")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  // Revision numbers are per-document and gap-free; the unique constraint is what
+  // makes concurrent snapshot writers safe (the loser retries).
+  @@unique([documentId, revisionNumber])
+  @@index([documentId, createdAt(sort: Desc)])
+  @@map("document_revisions")
+}
