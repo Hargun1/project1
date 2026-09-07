@@ -108,9 +108,14 @@ atomically — a replayed ticket fails.
 
 ## Authorization (Phase 10)
 
-Roles are a TypeScript union (`OWNER | EDITOR | VIEWER`) defined once in
+Roles are a constant list (`OWNER | EDITOR | VIEWER`) defined once in
 `@collab/shared` and mirrored by a Prisma enum, so the client, the server and the
 database cannot disagree about what a role is.
+
+Because the project is plain JavaScript, that agreement is not enforced by a
+compiler — it is enforced at runtime by `isRole()`, and by the Prisma enum, which
+rejects an invalid value at the database boundary even if application code lets
+one through.
 
 Every check happens on the server, at two points: HTTP requests are checked in
 middleware, and — separately — the WebSocket layer refuses to apply an update

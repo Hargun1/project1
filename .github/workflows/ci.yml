@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Lint, typecheck, test, build
+    name: Lint, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -32,24 +32,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The backend and the frontend both import @collab/shared, so its
-      # declaration output has to exist before anything else is type-checked.
-      - name: Build shared types
-        run: npm run build:shared
-
-      # Generates the Prisma client types from schema.prisma. No database needed:
+      # Generates the Prisma client from schema.prisma. No database needed:
       # `generate` is offline, unlike `migrate`.
       - name: Generate Prisma client
         run: npm run db:generate
 
+      # This project is plain JavaScript, so there is no `tsc --noEmit` gate.
+      # ESLint is the only step that parses every source file — a syntax error, an
+      # undefined variable or a bad import fails here or not at all. That makes it
+      # a correctness gate, not a style gate, and it must stay ahead of the tests.
       - name: Lint
         run: npm run lint
 
       - name: Check formatting
         run: npm run format:check
-
-      - name: Type check
-        run: npm run typecheck
 
       - name: Test
         run: npm test

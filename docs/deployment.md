@@ -9,7 +9,7 @@
 ```bash
 npm run infra:up     # docker compose up -d  → PostgreSQL + Redis
 npm run db:migrate   # apply the schema
-npm run dev:backend  # tsx watch, port 4000
+npm run dev:backend  # node --watch, port 4000
 npm run dev:frontend # vite, port 5173, proxying the API
 ```
 

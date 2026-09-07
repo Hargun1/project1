@@ -2,26 +2,20 @@
   "name": "@collab/shared",
   "version": "0.1.0",
   "private": true,
-  "description": "Types shared by the backend and the frontend: roles, API envelopes, DTOs",
-  "main": "./dist/cjs/index.js",
-  "module": "./dist/esm/index.js",
-  "types": "./dist/cjs/index.d.ts",
+  "type": "module",
+  "description": "Contracts shared by the backend and the frontend: roles, API envelopes, health DTOs",
+  "main": "./src/index.js",
   "exports": {
-    ".": {
-      "types": "./dist/cjs/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js"
-    }
+    ".": "./src/index.js"
   },
   "files": [
-    "dist"
+    "src"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.esm.json && node scripts/finalize-esm.mjs",
-    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
-    "typecheck": "tsc -p tsconfig.json"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
-    "typescript": "^5.7.2"
+    "vitest": "^3.0.0"
   }
 }

@@ -1,7 +1,7 @@
 # Database design
 
 PostgreSQL 17, accessed through Prisma. Four tables. Table and column names are
-snake_case via `@@map`/`@map`; the generated TypeScript client stays camelCase.
+snake_case via `@@map`/`@map`; the generated Prisma client stays camelCase.
 
 Every timestamp is `timestamptz`, which needs `@db.Timestamptz(3)` in the schema —
 Prisma's default `DateTime` maps to `timestamp` **without** time zone, storing a
@@ -134,7 +134,7 @@ the code that depends on it. `prisma migrate dev` is never run against a
 deployed database — `deploy` applies existing migrations without generating or
 resetting anything.
 
-CLI configuration lives in `backend/prisma.config.ts`. From Prisma 6 the CLI no
+CLI configuration lives in `backend/prisma.config.js`. From Prisma 6 the CLI no
 longer loads `.env` itself, and this repo keeps one `.env` at the root rather
 than a copy per workspace, so that file points dotenv at the root before
 `env("DATABASE_URL")` is resolved. It also replaces the deprecated

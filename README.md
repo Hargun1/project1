@@ -65,17 +65,40 @@ Longer write-ups: [docs/architecture.md](docs/architecture.md),
 
 ## Tech stack
 
-| Layer    | Choices                                                                    |
-| -------- | -------------------------------------------------------------------------- |
-| Frontend | React 19, TypeScript, Vite, Monaco Editor, Yjs, React Router, Tailwind CSS |
-| Backend  | Node.js, TypeScript, Express 5, `ws`, Prisma, Zod, pino, JWT               |
-| Data     | PostgreSQL 17 (durable), Redis 7 (Pub/Sub, tickets, rate limits)           |
-| Shared   | `@collab/shared` — one definition of roles, API envelopes and DTOs         |
-| Ops      | Docker Compose, Nginx, GitHub Actions, AWS (Phase 14)                      |
+| Layer    | Choices                                                                          |
+| -------- | -------------------------------------------------------------------------------- |
+| Frontend | React 19, JavaScript (ESM), Vite, Monaco Editor, Yjs, React Router, Tailwind CSS |
+| Backend  | Node.js, JavaScript (ESM), Express 5, `ws`, Prisma, Zod, pino, JWT               |
+| Data     | PostgreSQL 17 (durable), Redis 7 (Pub/Sub, tickets, rate limits)                 |
+| Shared   | `@collab/shared` — roles, API envelopes and their runtime guards                 |
+| Ops      | Docker Compose, Nginx, GitHub Actions, AWS (Phase 14)                            |
+
+The whole repository is plain JavaScript with ES modules — no TypeScript, no
+build step for `shared/` or `backend/`. Node runs the source directly; only the
+frontend is bundled, by Vite.
 
 `shared/` exists so a role string or an error code cannot drift between client
-and server: both import the same type, and a mismatch is a compile error rather
-than a production bug.
+and server. Without a compiler to catch drift at build time, it ships **runtime
+guards** (`isRole`, `isApiErrorCode`, `isApiErrorResponse`, `isDependencyState`)
+and both sides call them at the trust boundary. Those guards are covered by 35
+tests, because they are now the only thing enforcing the contract.
+
+## Validation strategy
+
+There is no `tsc --noEmit` gate, so correctness is enforced at runtime and in
+tests instead:
+
+| Boundary                                 | Enforced by                                                  |
+| ---------------------------------------- | ------------------------------------------------------------ |
+| Environment variables                    | Zod schema, parsed at startup — process exits on a bad value |
+| Inbound HTTP request bodies              | Zod schemas per route (from Phase 2)                         |
+| Roles and error codes                    | `@collab/shared` guards, called at every boundary            |
+| Error envelopes on the wire              | `isApiErrorResponse` before the client trusts a body         |
+| Undefined variables, bad imports, syntax | ESLint, which parses every file in CI                        |
+
+`AppError` validates its own `code` against the shared list and throws a
+`TypeError` on an unknown one, because a typo there would silently produce an
+envelope the client rejects.
 
 ## Requirements
 
@@ -132,10 +155,9 @@ failing later with `undefined`.
 
 | Command                | What it does                                         |
 | ---------------------- | ---------------------------------------------------- |
-| `npm run dev:backend`  | Express with `tsx watch`                             |
+| `npm run dev:backend`  | Express with `node --watch` (no transpiler)          |
 | `npm run dev:frontend` | Vite dev server on :5173, proxying the API to :4000  |
-| `npm run build`        | Builds `shared` → `backend` → `frontend`             |
-| `npm run typecheck`    | `tsc --noEmit` across every workspace                |
+| `npm run build`        | Bundles the frontend (nothing else needs building)   |
 | `npm run lint`         | ESLint 9 flat config over the whole monorepo         |
 | `npm test`             | Vitest in each workspace that has tests              |
 | `npm run db:migrate`   | Creates/applies a development migration              |
@@ -158,10 +180,11 @@ during a database blip.
 ## Repository layout
 
 ```
-shared/                 Types shared across the trust boundary
-  src/roles.ts          Role union + guard (OWNER | EDITOR | VIEWER)
-  src/api.ts            Error codes and the API error envelope
-  src/health.ts         Health / readiness DTOs
+shared/                 Contracts shared across the trust boundary
+  src/roles.js          ROLES + isRole guard (OWNER | EDITOR | VIEWER)
+  src/api.js            Error codes, envelope guards
+  src/health.js         Dependency states + documented health/readiness shapes
+  tests/guards.test.js  35 tests — the contract's only enforcement
 
 backend/
   prisma/schema.prisma  users · documents · document_members · document_revisions
@@ -170,12 +193,12 @@ backend/
   src/routes/           health routes
   src/database/         Prisma client + connection check
   src/utils/            pino logger (with redaction), AppError
-  src/app.ts            createApp() — no listener, so tests can import it
-  src/server.ts         listen + graceful shutdown
+  src/app.js            createApp() — no listener, so tests can import it
+  src/server.js         listen + graceful shutdown
   tests/                Vitest + supertest
 
 frontend/
-  src/services/         Typed fetch layer, ApiError
+  src/services/         fetch layer, ApiError
   src/components/       Presentational pieces
   src/layouts/          App shell
   src/pages/            Status page (real) + phase-labelled placeholders

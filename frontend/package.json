@@ -7,8 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@collab/shared": "*",
@@ -18,11 +17,8 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
-    "@types/react": "^19.0.2",
-    "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.2",
     "vite": "^6.0.7"
   }
 }
