@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { SERVICE_NAME, SERVICE_VERSION } from '../config/constants.js';
 import { checkDatabaseConnection } from '../database/prisma.js';
+import { checkRedisConnection } from '../redis/redis.js';
 
 export const healthRouter = Router();
 
@@ -26,18 +27,20 @@ healthRouter.get('/healthz', (_req, res) => {
  *
  * Answers 503 when degraded but still returns a *valid* body, because "which
  * dependency is down" is exactly what a caller needs to know.
- *
- * Redis reports `not_configured` until Phase 8 connects it — an honest signal
- * rather than a check that pretends to pass.
  */
 healthRouter.get('/readyz', async (_req, res) => {
-  const databaseUp = await checkDatabaseConnection();
+  const [databaseUp, redisUp] = await Promise.all([
+    checkDatabaseConnection(),
+    checkRedisConnection(),
+  ]);
 
-  res.status(databaseUp ? 200 : 503).json({
-    status: databaseUp ? 'ready' : 'degraded',
+  const ready = databaseUp && redisUp;
+
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'degraded',
     checks: {
       database: databaseUp ? 'up' : 'down',
-      redis: 'not_configured',
+      redis: redisUp ? 'up' : 'down',
     },
     timestamp: new Date().toISOString(),
   });

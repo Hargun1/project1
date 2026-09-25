@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { SERVICE_NAME, SERVICE_VERSION } from './config/constants.js';
 import { logger } from './utils/logger.js';
 import { disconnectDatabase } from './database/prisma.js';
+import { disconnectRedis } from './redis/redis.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -18,9 +19,10 @@ const server = app.listen(env.PORT, () => {
 let shuttingDown = false;
 
 /**
- * Graceful shutdown: stop accepting connections, release the PostgreSQL pool,
- * then exit. Phase 5 will also close WebSocket connections here, and Phase 12
- * relies on this so a rolling restart does not drop in-flight requests.
+ * Graceful shutdown: stop accepting connections, release the PostgreSQL pool and
+ * Redis connection, then exit. Phase 5 will also close WebSocket connections
+ * here, and Phase 12 relies on this so a rolling restart does not drop
+ * in-flight requests.
  *
  * @param {string} signal
  * @returns {Promise<void>}
@@ -46,6 +48,11 @@ async function shutdown(signal) {
       await disconnectDatabase();
     } catch (error) {
       logger.error({ err: error }, 'error while disconnecting from PostgreSQL');
+    }
+    try {
+      await disconnectRedis();
+    } catch (error) {
+      logger.error({ err: error }, 'error while disconnecting from Redis');
     }
     clearTimeout(forceExit);
     process.exit(closeError ? 1 : 0);

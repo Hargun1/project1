@@ -52,6 +52,9 @@ export const envSchema = z
     DOC_SNAPSHOT_DEBOUNCE_MS: z.coerce.number().int().positive().max(60_000).default(2_000),
     /** Hard cap on a single document's Yjs state (Phase 11). */
     MAX_DOCUMENT_SIZE_BYTES: z.coerce.number().int().positive().default(1_048_576),
+
+    /** Refresh session TTL in Redis, in seconds. Defaults to 7 days. */
+    REFRESH_TOKEN_EXPIRY_SECONDS: z.coerce.number().int().positive().default(604_800),
   })
   .superRefine((env, ctx) => {
     if (env.JWT_SECRET === env.JWT_REFRESH_SECRET) {
@@ -80,7 +83,7 @@ export const envSchema = z
  *
  * @param {Record<string, string | undefined>} source usually `process.env`
  * @returns {object} the parsed, defaulted, coerced environment
- */
+ */                              
 export function parseEnv(source) {
   return envSchema.parse(source);
 }

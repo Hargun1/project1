@@ -13,5 +13,6 @@
  * ESM relative imports need the file extension; `./api` would not resolve.
  */
 export * from './api.js';
+export * from './auth.js';
 export * from './health.js';
 export * from './roles.js';

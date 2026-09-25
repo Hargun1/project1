@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 import { env } from './config/env.js';
 import { JSON_BODY_LIMIT } from './config/constants.js';
@@ -9,6 +10,7 @@ import { logger } from './utils/logger.js';
 import { requestIdMiddleware } from './middleware/request-id.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.routes.js';
+import { authRouter } from './routes/auth.routes.js';
 
 /**
  * Builds the Express application.
@@ -45,10 +47,13 @@ export function createApp() {
     }),
   );
 
+  // Parse cookies before routes so `req.cookies` is available (refresh token).
+  app.use(cookieParser());
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   app.use(express.urlencoded({ extended: false, limit: JSON_BODY_LIMIT }));
 
   app.use(healthRouter);
+  app.use('/api/auth', authRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
