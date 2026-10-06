@@ -45,6 +45,10 @@ model Document {
   name     String @db.VarChar(255)
   language String @db.VarChar(32)
 
+  /// Plain-text document content. Phase 4 stores text here for save/load;
+  /// Phase 6 replaces this with Yjs binary snapshots stored in revisions.
+  content String @default("") @db.Text
+
   /// Soft delete: revisions and membership history survive a "deleted" document.
   /// Every read path must filter on `deletedAt: null`.
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)

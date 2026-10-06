@@ -11,6 +11,7 @@ import { requestIdMiddleware } from './middleware/request-id.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.routes.js';
 import { authRouter } from './routes/auth.routes.js';
+import { documentRouter } from './routes/document.routes.js';
 
 /**
  * Builds the Express application.
@@ -54,6 +55,7 @@ export function createApp() {
 
   app.use(healthRouter);
   app.use('/api/auth', authRouter);
+  app.use('/api/documents', documentRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

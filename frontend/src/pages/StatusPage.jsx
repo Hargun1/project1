@@ -15,8 +15,8 @@ import { getHealth, getReadiness } from '../services/health.service.js';
 
 const PHASES = [
   { number: 1, name: 'Foundation', done: true },
-  { number: 2, name: 'Authentication', done: false },
-  { number: 3, name: 'Documents', done: false },
+  { number: 2, name: 'Authentication', done: true },
+  { number: 3, name: 'Documents', done: true },
   { number: 4, name: 'Monaco editor', done: false },
   { number: 5, name: 'WebSockets', done: false },
   { number: 6, name: 'Yjs collaboration', done: false },

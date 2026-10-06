@@ -5,8 +5,9 @@ import { AppShell } from './layouts/AppShell.jsx';
 import { LoginPage } from './pages/LoginPage.jsx';
 import { RegisterPage } from './pages/RegisterPage.jsx';
 import { NotFoundPage } from './pages/NotFoundPage.jsx';
-import { PlaceholderPage } from './pages/PlaceholderPage.jsx';
 import { StatusPage } from './pages/StatusPage.jsx';
+import { DashboardPage } from './pages/DashboardPage.jsx';
+import { EditorPage } from './pages/EditorPage.jsx';
 
 /**
  * Redirects to /login if the user is not authenticated.
@@ -53,56 +54,61 @@ function GuestRoute({ children }) {
 
 /**
  * Route skeleton for the pages listed in the specification (§7).
- * Phase 2 adds real login/register pages and route protection.
+ *
+ * The editor route renders outside AppShell because the Monaco editor fills
+ * the full viewport and manages its own chrome. Every other page sits inside
+ * AppShell's nav + footer wrapper.
  */
 function AppRoutes() {
   return (
-    <AppShell>
-      <Routes>
-        <Route path="/" element={<StatusPage />} />
-        <Route
-          path="/login"
-          element={
-            <GuestRoute>
-              <LoginPage />
-            </GuestRoute>
-          }
-        />
-        <Route
-          path="/register"
-          element={
-            <GuestRoute>
-              <RegisterPage />
-            </GuestRoute>
-          }
-        />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <PlaceholderPage
-                title="Your documents"
-                phase="Phase 3 — Documents"
-                description="Paginated document list with search, language filter and per-document role."
+    <Routes>
+      {/* Full-screen editor — no AppShell chrome */}
+      <Route
+        path="/editor/:documentId"
+        element={
+          <ProtectedRoute>
+            <EditorPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* All other pages get the shared nav + footer */}
+      <Route
+        path="*"
+        element={
+          <AppShell>
+            <Routes>
+              <Route path="/" element={<StatusPage />} />
+              <Route
+                path="/login"
+                element={
+                  <GuestRoute>
+                    <LoginPage />
+                  </GuestRoute>
+                }
               />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/editor/:documentId"
-          element={
-            <ProtectedRoute>
-              <PlaceholderPage
-                title="Editor"
-                phase="Phase 4 — Monaco"
-                description="Monaco Editor bound to a Y.Text, synchronised over an authenticated WebSocket."
+              <Route
+                path="/register"
+                element={
+                  <GuestRoute>
+                    <RegisterPage />
+                  </GuestRoute>
+                }
               />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
-    </AppShell>
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <DashboardPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </AppShell>
+        }
+      />
+    </Routes>
   );
 }
 

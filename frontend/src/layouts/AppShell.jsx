@@ -71,7 +71,7 @@ export function AppShell({ children }) {
       <footer className="border-t border-zinc-800/80 px-6 py-5">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 text-xs text-zinc-500">
           <span>Monaco · Yjs CRDT · Redis Pub/Sub · PostgreSQL</span>
-          <span className="font-mono">phase 2 / 15 — authentication</span>
+          <span className="font-mono">phase 4 / 15 — monaco</span>
         </div>
       </footer>
     </div>
