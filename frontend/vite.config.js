@@ -26,6 +26,7 @@ export default defineConfig({
       '/api': { target: BACKEND_ORIGIN, changeOrigin: true },
       '/healthz': { target: BACKEND_ORIGIN, changeOrigin: true },
       '/readyz': { target: BACKEND_ORIGIN, changeOrigin: true },
+      '/ws': { target: BACKEND_ORIGIN, changeOrigin: true, ws: true },
     },
   },
 

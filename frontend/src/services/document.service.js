@@ -81,3 +81,22 @@ export async function saveDocumentContent(accessToken, id, content) {
     body: JSON.stringify({ content }),
   });
 }
+
+/**
+ * Phase 5 — request a single-use WebSocket connection ticket (§11).
+ *
+ * The ticket is short-lived and scoped to one (user, document) pair. The
+ * client passes it as `?ticket=...` on the WebSocket URL instead of a raw JWT.
+ *
+ * @param {string} accessToken
+ * @param {string} documentId
+ * @returns {Promise<string>} the opaque ticket string
+ */
+export async function requestWsTicket(accessToken, documentId) {
+  const result = await apiFetch(`/api/documents/${documentId}/ws-ticket`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return result.ticket;
+}
+

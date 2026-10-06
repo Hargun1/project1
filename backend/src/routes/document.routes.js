@@ -12,3 +12,7 @@ documentRouter.get('/:id', docCtrl.getDocument);
 documentRouter.patch('/:id', docCtrl.updateDocument);
 documentRouter.put('/:id/content', docCtrl.saveContent);
 documentRouter.delete('/:id', docCtrl.deleteDocument);
+
+// ── Phase 5: WebSocket ticket ───────────────────────────────────────────────
+documentRouter.post('/:id/ws-ticket', docCtrl.issueWsTicket);
+

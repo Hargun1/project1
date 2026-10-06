@@ -1,5 +1,7 @@
 import * as docService from '../services/document.service.js';
 import { createDocumentSchema, updateDocumentSchema, listDocumentsSchema, saveContentSchema } from '../utils/document.schemas.js';
+import { issueTicket } from '../websocket/ticket.service.js';
+
 
 export async function createDocument(req, res) {
   const data = createDocumentSchema.parse(req.body);
@@ -35,3 +37,20 @@ export async function saveContent(req, res) {
   const document = await docService.saveContent(req.user.id, req.params.id, content);
   res.status(200).json({ document });
 }
+
+/**
+ * Phase 5 — issue a single-use WebSocket connection ticket (§11).
+ *
+ * The ticket is scoped to this (user, document) pair, stored in Redis with a
+ * short TTL, and consumed on the first WebSocket handshake that presents it.
+ * This avoids putting the raw JWT in the WebSocket URL.
+ */
+export async function issueWsTicket(req, res) {
+  // Verify the user has access to the document before issuing a ticket.
+  // getDocument throws 404/403 if the document is missing or access is denied.
+  await docService.getDocument(req.user.id, req.params.id);
+
+  const ticket = await issueTicket(req.user.id, req.params.id);
+  res.status(200).json({ ticket });
+}
+

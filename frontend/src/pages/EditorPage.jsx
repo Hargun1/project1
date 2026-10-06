@@ -4,15 +4,17 @@ import Editor from '@monaco-editor/react';
 import { useAuth } from '../auth/useAuth.js';
 import * as docService from '../services/document.service.js';
 import { monacoLanguage, LANGUAGE_OPTIONS } from '../utils/languages.js';
+import { createWsClient, WS_STATUS } from '../websocket/ws-client.js';
 
 /**
- * Phase 4 — Monaco Editor page.
+ * Phase 4 + 5 — Monaco Editor page with WebSocket connection.
  *
- * Implements: Editor, Syntax highlighting, Languages, Save/load (§9, §31, §48).
+ * Phase 4: Editor, Syntax highlighting, Languages, Save/load (§9, §31, §48).
+ * Phase 5: WebSocket connection with ticket-based auth + connection status.
  *
  * The layout follows the spec's Editor UI wireframe: a top bar with document
- * name, language selector, save status, and a Monaco Editor filling the
- * remaining viewport height with a dark theme.
+ * name, language selector, save status, connection status, and a Monaco Editor
+ * filling the remaining viewport height with a dark theme.
  */
 export function EditorPage() {
   const { documentId } = useParams();
@@ -28,6 +30,10 @@ export function EditorPage() {
   const [language, setLanguage] = useState('javascript');
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved' | 'error'
   const [isReadOnly, setIsReadOnly] = useState(false);
+
+  // ── WebSocket state (Phase 5) ─────────────────────────────────────────
+  const [connectionStatus, setConnectionStatus] = useState(WS_STATUS.DISCONNECTED);
+  const wsClientRef = useRef(null);
 
   // Track whether the editor content has diverged from the last-saved value
   const savedContentRef = useRef('');
@@ -65,6 +71,33 @@ export function EditorPage() {
     load();
     return () => { cancelled = true; };
   }, [accessToken, documentId]);
+
+  // ── WebSocket connection (Phase 5) ────────────────────────────────────
+  useEffect(() => {
+    if (!doc) return undefined; // wait until the document is loaded
+
+    const client = createWsClient({
+      documentId,
+      accessToken,
+      onStatusChange: (status) => setConnectionStatus(status),
+      onMessage: (msg) => {
+        // Phase 5: only log messages. Phase 6 will wire up Yjs sync here.
+        if (msg.type === 'joined') {
+          console.warn('[editor] Joined document room:', msg.documentId);
+        } else if (msg.type === 'error') {
+          console.warn('[editor] WS error:', msg.message);
+        }
+        // Phase 6 will handle 'sync' and 'awareness' messages.
+      },
+    });
+
+    wsClientRef.current = client;
+
+    return () => {
+      client.disconnect();
+      wsClientRef.current = null;
+    };
+  }, [doc, documentId, accessToken]);
 
   // ── Save logic (debounced auto-save + manual Ctrl+S) ──────────────────
   const saveContent = useCallback(
@@ -146,6 +179,16 @@ export function EditorPage() {
     error: { text: 'Save failed', className: 'text-red-400 bg-red-500/10 border-red-500/20' },
   };
   const currentStatus = statusConfig[saveStatus] ?? statusConfig.unsaved;
+
+  // ── Connection status styling (Phase 5) ───────────────────────────────
+  const connectionConfig = {
+    [WS_STATUS.CONNECTED]:    { dot: 'bg-emerald-400', text: 'Connected' },
+    [WS_STATUS.CONNECTING]:   { dot: 'bg-yellow-400 animate-pulse', text: 'Connecting…' },
+    [WS_STATUS.RECONNECTING]: { dot: 'bg-yellow-400 animate-pulse', text: 'Reconnecting…' },
+    [WS_STATUS.DISCONNECTED]: { dot: 'bg-zinc-500', text: 'Disconnected' },
+    [WS_STATUS.ERROR]:        { dot: 'bg-red-400', text: 'Error' },
+  };
+  const connStatus = connectionConfig[connectionStatus] ?? connectionConfig[WS_STATUS.DISCONNECTED];
 
   // ── Render ────────────────────────────────────────────────────────────
   if (loading) {
@@ -298,7 +341,11 @@ export function EditorPage() {
           <span>UTF-8</span>
         </div>
         <div className="flex items-center gap-4">
-          <span className="font-mono">Phase 4 / 15</span>
+          {/* Connection status indicator (Phase 5) */}
+          <span className="flex items-center gap-1.5">
+            <span className={`inline-block size-2 rounded-full ${connStatus.dot}`} />
+            {connStatus.text}
+          </span>
           <span>Ctrl+S to save</span>
         </div>
       </footer>

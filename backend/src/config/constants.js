@@ -22,3 +22,12 @@ export const REFRESH_SESSION_PREFIX = 'refresh:';
 
 /** Name of the HttpOnly cookie carrying the refresh token. */
 export const REFRESH_COOKIE_NAME = 'collab_refresh';
+
+// ── WebSocket (Phase 5) ───────────────────────────────────────────────────
+
+/** Redis key prefix for single-use WebSocket connection tickets. */
+export const WS_TICKET_PREFIX = 'ws_ticket:';
+
+/** Server-side heartbeat ping interval in milliseconds. */
+export const WS_HEARTBEAT_INTERVAL_MS = 30_000;
+

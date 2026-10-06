@@ -4,6 +4,7 @@ import { SERVICE_NAME, SERVICE_VERSION } from './config/constants.js';
 import { logger } from './utils/logger.js';
 import { disconnectDatabase } from './database/prisma.js';
 import { disconnectRedis } from './redis/redis.js';
+import { attachWebSocketServer, closeWebSocketServer } from './websocket/ws-server.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -16,13 +17,17 @@ const server = app.listen(env.PORT, () => {
   );
 });
 
+// ── Phase 5: attach WebSocket server to the same HTTP server ─────────────
+const wss = attachWebSocketServer(server);
+
 let shuttingDown = false;
 
 /**
- * Graceful shutdown: stop accepting connections, release the PostgreSQL pool and
- * Redis connection, then exit. Phase 5 will also close WebSocket connections
- * here, and Phase 12 relies on this so a rolling restart does not drop
- * in-flight requests.
+ * Graceful shutdown: close WebSocket connections, stop accepting HTTP requests,
+ * release the PostgreSQL pool and Redis connection, then exit.
+ *
+ * WebSocket connections are closed first so that in-flight collaboration
+ * messages drain before the data stores go away.
  *
  * @param {string} signal
  * @returns {Promise<void>}
@@ -40,6 +45,14 @@ async function shutdown(signal) {
   }, SHUTDOWN_TIMEOUT_MS);
   forceExit.unref();
 
+  // 1. Close all WebSocket connections with a SERVER_SHUTDOWN code.
+  try {
+    await closeWebSocketServer(wss);
+  } catch (error) {
+    logger.error({ err: error }, 'error while closing WebSocket server');
+  }
+
+  // 2. Stop accepting new HTTP connections.
   server.close(async (closeError) => {
     if (closeError) {
       logger.error({ err: closeError }, 'error while closing HTTP server');
