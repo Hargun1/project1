@@ -17,12 +17,12 @@ const PHASES = [
   { number: 1, name: 'Foundation', done: true },
   { number: 2, name: 'Authentication', done: true },
   { number: 3, name: 'Documents', done: true },
-  { number: 4, name: 'Monaco editor', done: false },
-  { number: 5, name: 'WebSockets', done: false },
-  { number: 6, name: 'Yjs collaboration', done: false },
-  { number: 7, name: 'Presence', done: false },
-  { number: 8, name: 'Redis Pub/Sub', done: false },
-  { number: 9, name: 'Persistence + revisions', done: false },
+  { number: 4, name: 'Monaco editor', done: true },
+  { number: 5, name: 'WebSockets', done: true },
+  { number: 6, name: 'Yjs collaboration', done: true },
+  { number: 7, name: 'Presence', done: true },
+  { number: 8, name: 'Redis Pub/Sub', done: true },
+  { number: 9, name: 'Persistence + revisions', done: true },
   { number: 10, name: 'Role-based access', done: false },
   { number: 11, name: 'Security hardening', done: false },
   { number: 12, name: 'Docker + Nginx', done: false },
@@ -125,15 +125,17 @@ export function StatusPage() {
           title: 'Redis',
           tone: toneForDependency(redisState),
           pill: dependencyLabel(redisState),
-          detail: 'Pub/Sub, rate limits and WS tickets are wired up in Phase 8',
+          detail: 'Refresh sessions, WS tickets and cross-instance Pub/Sub',
         }
-      : { title: 'Redis', tone: 'idle', pill: 'not configured', detail: 'Arrives in Phase 8' };
+      : readiness.state === 'loading'
+        ? { title: 'Redis', tone: 'idle', pill: 'checking', detail: 'GET /readyz …' }
+        : { title: 'Redis', tone: 'down', pill: 'unknown', detail: readiness.message };
 
   return (
     <div className="space-y-10">
       <section className="space-y-3">
         <p className="font-mono text-xs uppercase tracking-widest text-emerald-400/80">
-          Foundation complete
+          Phase 9 — collaboration, history and restore
         </p>
         <h1 className="text-3xl font-semibold tracking-tight text-white">
           Real-time collaborative code editor

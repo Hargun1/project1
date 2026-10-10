@@ -1,55 +1,62 @@
 import { z } from 'zod';
+import { isBase64 } from '@collab/shared';
+import { WS_MAX_PAYLOAD_BYTES } from '../config/constants.js';
 
 /**
- * Zod schemas for incoming WebSocket messages (§12, §17).
+ * Zod schemas for inbound WebSocket messages (§12, §17).
  *
- * Every message read off the socket is validated before any handler touches it.
- * TypeScript types vanish at runtime; Zod is what actually prevents a malformed
- * payload from reaching business logic.
+ * Every message read off the socket is validated here before any handler
+ * touches it. The union mirrors `WS_CLIENT_MESSAGE_TYPES` in `@collab/shared`.
  *
- * The discriminated union mirrors the `WS_CLIENT_MESSAGE_TYPES` list in
- * `@collab/shared`. When Phase 6 adds `sync` and `awareness` payloads, they
- * are added as new branches here.
+ * Base64 is checked for *shape* only; whether the bytes are a valid Yjs update
+ * is decided by the collaboration service, which decodes before applying.
  */
 
-const pingSchema = z.object({
-  type: z.literal('ping'),
+const base64 = z
+  .string()
+  // Base64 is 4/3 the size of its bytes; the frame limit already bounds this,
+  // but an explicit cap keeps the schema self-describing.
+  .max(Math.ceil((WS_MAX_PAYLOAD_BYTES * 4) / 3))
+  .refine(isBase64, 'must be a base64 string');
+
+const pingSchema = z.object({ type: z.literal('ping') });
+
+const syncStep1Schema = z.object({
+  type: z.literal('sync-step1'),
+  stateVector: base64.pipe(z.string().min(1)),
 });
 
-/**
- * Phase 6 placeholder — Yjs sync update.
- * `data` will carry a base64-encoded Uint8Array.
- */
-const syncSchema = z.object({
-  type: z.literal('sync'),
-  documentId: z.string().uuid(),
-  data: z.string().min(1),
+/** May legitimately be the 2-byte empty update when the client has nothing new. */
+const syncStep2Schema = z.object({
+  type: z.literal('sync-step2'),
+  update: base64.pipe(z.string().min(1)),
 });
 
-/**
- * Phase 6 placeholder — Yjs awareness update.
- * `data` will carry a base64-encoded Uint8Array.
- */
+const updateSchema = z.object({
+  type: z.literal('update'),
+  update: base64.pipe(z.string().min(1)),
+});
+
+/** A y-protocols awareness update; its JSON content is validated by presence.service. */
 const awarenessSchema = z.object({
   type: z.literal('awareness'),
-  documentId: z.string().uuid(),
-  data: z.string().min(1),
+  update: base64.pipe(z.string().min(1)),
 });
 
 /**
- * The full client → server message union.
- *
- * `z.discriminatedUnion` checks the `type` field first and then applies only
- * the matching branch, giving clear error messages on mismatches.
+ * `z.discriminatedUnion` reads `type` first and validates only the matching
+ * branch, so errors name the real problem instead of listing every branch.
  */
 export const clientMessageSchema = z.discriminatedUnion('type', [
   pingSchema,
-  syncSchema,
+  syncStep1Schema,
+  syncStep2Schema,
+  updateSchema,
   awarenessSchema,
 ]);
 
 /**
- * Attempt to parse raw text from a WebSocket frame into a validated message.
+ * Parse raw text from a WebSocket frame into a validated message.
  *
  * @param {string} raw
  * @returns {{ ok: true, message: object } | { ok: false, error: string }}

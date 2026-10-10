@@ -31,3 +31,30 @@ export const WS_TICKET_PREFIX = 'ws_ticket:';
 /** Server-side heartbeat ping interval in milliseconds. */
 export const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
+/**
+ * How often an open socket re-reads its role from PostgreSQL (Phase 10).
+ * Access changes are pushed instantly through Redis; this is the safety net
+ * that bounds how long a revocation can be missed if that message is lost.
+ */
+export const ACCESS_RECHECK_INTERVAL_MS = 60_000;
+
+/** Max inbound WebSocket frame. Transport-level guard; document size caps are Phase 11. */
+export const WS_MAX_PAYLOAD_BYTES = 1_048_576;
+
+// ── Collaboration (Phase 6) ───────────────────────────────────────────────
+
+/**
+ * Upper bound on how long continuous typing can postpone a save. A pure idle
+ * debounce (`DOC_SNAPSHOT_DEBOUNCE_MS`) never fires while someone keeps typing,
+ * which would make the crash-loss window unbounded.
+ */
+export const DOC_SNAPSHOT_MAX_WAIT_MS = 10_000;
+
+/** Delay before retrying a failed save (e.g. PostgreSQL briefly unavailable). */
+export const DOC_SAVE_RETRY_MS = 5_000;
+
+/**
+ * How long a newly opened session waits for peer instances to answer its hello
+ * with their in-memory state before serving clients anyway (Phase 9).
+ */
+export const PEER_SYNC_TIMEOUT_MS = 1_000;

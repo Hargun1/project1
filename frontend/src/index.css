@@ -17,3 +17,34 @@ body {
     'Helvetica Neue',
     sans-serif;
 }
+
+/*
+ * Remote cursors drawn by y-monaco (Phase 7). These rules give the shape;
+ * per-collaborator colours and name labels are generated at runtime by
+ * collaboration/cursor-styles.js, keyed by awareness client id.
+ */
+.yRemoteSelection {
+  background-color: rgb(161 161 170 / 0.25);
+}
+
+.yRemoteSelectionHead {
+  position: absolute;
+  height: 100%;
+  box-sizing: border-box;
+  border-left: 2px solid #a1a1aa;
+}
+
+.yRemoteSelectionHead::after {
+  position: absolute;
+  top: -1.25em;
+  left: -2px;
+  padding: 0 4px;
+  border-radius: 3px 3px 3px 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 10px;
+  line-height: 1.25em;
+  white-space: nowrap;
+  color: #09090b;
+  pointer-events: none;
+  content: '';
+}

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthProvider.jsx';
 import { useAuth } from './auth/useAuth.js';
@@ -7,7 +8,23 @@ import { RegisterPage } from './pages/RegisterPage.jsx';
 import { NotFoundPage } from './pages/NotFoundPage.jsx';
 import { StatusPage } from './pages/StatusPage.jsx';
 import { DashboardPage } from './pages/DashboardPage.jsx';
-import { EditorPage } from './pages/EditorPage.jsx';
+
+// Monaco, its language workers and Yjs are most of the bundle. Loading the
+// editor route lazily keeps them off the login and dashboard pages.
+const EditorPage = lazy(() =>
+  import('./pages/EditorPage.jsx').then((module) => ({ default: module.EditorPage })),
+);
+const HistoryPage = lazy(() =>
+  import('./pages/HistoryPage.jsx').then((module) => ({ default: module.HistoryPage })),
+);
+
+function Spinner() {
+  return (
+    <div className="flex items-center justify-center py-20">
+      <div className="size-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
+    </div>
+  );
+}
 
 /**
  * Redirects to /login if the user is not authenticated.
@@ -17,11 +34,7 @@ function ProtectedRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="size-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
-      </div>
-    );
+    return <Spinner />;
   }
 
   if (!isAuthenticated) {
@@ -38,11 +51,7 @@ function GuestRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="size-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
-      </div>
-    );
+    return <Spinner />;
   }
 
   if (isAuthenticated) {
@@ -67,7 +76,20 @@ function AppRoutes() {
         path="/editor/:documentId"
         element={
           <ProtectedRoute>
-            <EditorPage />
+            <Suspense fallback={<Spinner />}>
+              <EditorPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/documents/:documentId/history"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<Spinner />}>
+              <HistoryPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />

@@ -35,5 +35,8 @@
       "Bash(node -e \"const p=require\\('./node_modules/prisma/package.json'\\); console.log\\(JSON.stringify\\(p.exports,null,1\\)\\)\")",
       "Bash(powershell.exe -NoProfile -Command \"Get-Process node,tsx -ErrorAction SilentlyContinue | Select-Object Id,ProcessName | Format-Table -AutoSize\")"
     ]
+  },
+  "enabledPlugins": {
+    "notion@anthropic-plugin-directory": true
   }
 }

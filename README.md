@@ -10,11 +10,13 @@ server-side lock, edits are fanned out **across backend instances** with Redis
 Pub/Sub so the system scales horizontally, and document state is persisted as
 **binary Yjs snapshots** so a restored document keeps its merge history.
 
-> **Status: Phase 1 of 15 (Foundation) complete.** The monorepo, shared type
-> package, Express server, database schema, React client and CI pipeline are in
-> place and verified. Authentication, documents, the Monaco editor, WebSockets
-> and Yjs collaboration are _not_ implemented yet — the routes exist and say so.
-> See [Build phases](#build-phases).
+> **Status: Phase 9 of 15 (Persistence + revisions) complete.** Accounts,
+> documents, the Monaco editor, ticket-authenticated WebSockets, real-time CRDT
+> editing, live presence and revision history with restore work end to end,
+> across **several backend instances** linked by Redis Pub/Sub, with documents
+> and revisions persisted as binary Yjs state in PostgreSQL. Member management,
+> rate limiting and the Nginx/Docker deployment are _not_ built yet. See
+> [Build phases](#build-phases).
 
 ## Architecture
 
@@ -166,6 +168,23 @@ failing later with `undefined`.
 | `npm run infra:down`   | Stops the containers, keeps the volume               |
 | `npm run infra:reset`  | Stops the containers **and deletes the data volume** |
 
+## When Redis is unavailable
+
+Redis carries live edits between backend instances; it never stores documents.
+If it goes down mid-session (verified by stopping the container):
+
+- Editing continues. Users on the same instance still see each other live;
+  users on different instances stop seeing each other, and the editor shows
+  **Degraded: other servers out of sync**.
+- Saving continues. Each save merges into PostgreSQL under a row lock, so the
+  instances' diverged copies are combined, never overwritten.
+- New connections and logins fail (tickets and refresh sessions live in Redis)
+  and `/readyz` reports `503`, so a load balancer stops routing new traffic.
+- When Redis returns, the instances re-run a state-vector handshake and every
+  edit made during the outage appears everywhere, without clients reconnecting.
+
+Full behaviour table: [docs/scaling.md](docs/scaling.md#when-redis-is-unavailable-43).
+
 ## Health endpoints
 
 | Endpoint   | Meaning                                                                    |
@@ -183,25 +202,40 @@ during a database blip.
 shared/                 Contracts shared across the trust boundary
   src/roles.js          ROLES + isRole guard (OWNER | EDITOR | VIEWER)
   src/api.js            Error codes, envelope guards
+  src/ws-messages.js    WebSocket message vocabulary, close/error codes
+  src/encoding.js       base64 <-> Uint8Array for Yjs payloads in JSON
   src/health.js         Dependency states + documented health/readiness shapes
-  tests/guards.test.js  35 tests — the contract's only enforcement
+  tests/                Guards and codec tests
 
 backend/
   prisma/schema.prisma  users · documents · document_members · document_revisions
   src/config/           Zod-validated environment, constants
-  src/middleware/       request-id, central error handler
-  src/routes/           health routes
-  src/database/         Prisma client + connection check
+  src/middleware/       request-id, JWT authentication, central error handler
+  src/routes/ controllers/ services/ repositories/
+                        REST layers: auth, documents, health
+  src/services/collaboration.service.js, presence.service.js
+                        Hub: one Y.Doc + Awareness per open document, synced
+                        across instances over Redis; merge-on-save; debounced
+                        saves; validated, identity-checked presence
+  src/websocket/        ws server, tickets, connection lifecycle, Zod schemas
+  src/auth/             bcrypt, JWT, rotating refresh sessions in Redis
+  src/database/ redis/  Prisma client, ioredis client, Pub/Sub bus + envelope schema
   src/utils/            pino logger (with redaction), AppError
   src/app.js            createApp() — no listener, so tests can import it
-  src/server.js         listen + graceful shutdown
-  tests/                Vitest + supertest
+  src/server.js         listen + WebSocket attach + graceful shutdown/flush
+  tests/                Vitest + supertest; collaboration and cluster tests drive
+                        real WebSocket servers (two instances over an in-memory
+                        bus that can simulate a Redis outage) with real Yjs clients
 
 frontend/
-  src/services/         fetch layer, ApiError
-  src/components/       Presentational pieces
-  src/layouts/          App shell
-  src/pages/            Status page (real) + phase-labelled placeholders
+  src/auth/             AuthProvider (in-memory access token, silent refresh)
+  src/services/         fetch layer, ApiError, REST clients
+  src/websocket/        Socket transport: tickets, keepalive, backoff
+  src/collaboration/    Yjs sync protocol, save status, escaped cursor CSS
+  src/hooks/            usePresence (who is here, without per-cursor renders)
+  tests/                Vitest unit tests for pure modules
+  src/pages/            Status, login, register, dashboard, editor, history
+  src/utils/            Language list, Monaco worker/bundling setup
 
 docs/                   Architecture, database, and per-phase deep dives
 ```
@@ -220,23 +254,29 @@ Implemented in Phase 1:
 - A central error handler that returns a typed envelope and never leaks stack
   traces or database errors in production
 
-Planned, and deliberately not claimed as working yet: password hashing, JWT
-access/refresh tokens, single-use WebSocket tickets, rate limiting, and RBAC
-enforced server-side (Phases 2, 8, 10 and 11).
+Implemented in Phases 2–6: bcrypt password hashing; short-lived JWT access
+tokens with an atomically rotated `HttpOnly` refresh cookie; single-use
+WebSocket tickets; role re-checked on every socket connection, with edits from
+viewers refused on the server; Zod validation of every WebSocket message.
+Details and test references: [docs/security.md](docs/security.md).
+
+Planned, and deliberately not claimed as working yet: member management and
+revoking an open socket (Phase 10), rate limiting and document size caps
+(Phase 11).
 
 ## Build phases
 
 | #   | Phase                   | Status  |
 | --- | ----------------------- | ------- |
 | 1   | Foundation              | ✅ done |
-| 2   | Authentication          | —       |
-| 3   | Documents               | —       |
-| 4   | Monaco editor           | —       |
-| 5   | WebSockets              | —       |
-| 6   | Yjs collaboration       | —       |
-| 7   | Presence + awareness    | —       |
-| 8   | Redis Pub/Sub scaling   | —       |
-| 9   | Persistence + revisions | —       |
+| 2   | Authentication          | ✅ done |
+| 3   | Documents               | ✅ done |
+| 4   | Monaco editor           | ✅ done |
+| 5   | WebSockets              | ✅ done |
+| 6   | Yjs collaboration       | ✅ done |
+| 7   | Presence + awareness    | ✅ done |
+| 8   | Redis Pub/Sub scaling   | ✅ done |
+| 9   | Persistence + revisions | ✅ done |
 | 10  | Role-based access       | —       |
 | 11  | Security hardening      | —       |
 | 12  | Docker + Nginx          | —       |

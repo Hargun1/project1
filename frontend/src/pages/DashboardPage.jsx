@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { can } from '@collab/shared';
 import { useAuth } from '../auth/useAuth.js';
 import * as docService from '../services/document.service.js';
 
 export function DashboardPage() {
-  const { accessToken } = useAuth();
+  const { getAccessToken } = useAuth();
   const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
   const [meta, setMeta] = useState(null);
@@ -23,7 +24,11 @@ export function DashboardPage() {
     async function load() {
       try {
         setLoading(true);
-        const res = await docService.listDocuments(accessToken, { page, search, language });
+        const res = await docService.listDocuments(await getAccessToken(), {
+          page,
+          search,
+          language,
+        });
         setDocuments(res.data);
         setMeta(res.meta);
         setError(null);
@@ -34,14 +39,17 @@ export function DashboardPage() {
       }
     }
     load();
-  }, [accessToken, page, search, language]);
+  }, [getAccessToken, page, search, language]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
     if (!newName.trim()) return;
     try {
       setCreating(true);
-      const res = await docService.createDocument(accessToken, { name: newName, language: newLanguage });
+      const res = await docService.createDocument(await getAccessToken(), {
+        name: newName,
+        language: newLanguage,
+      });
       navigate(`/editor/${res.document.id}`);
     } catch (err) {
       alert(`Error: ${err.message}`);
@@ -53,7 +61,7 @@ export function DashboardPage() {
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this document?')) return;
     try {
-      await docService.deleteDocument(accessToken, id);
+      await docService.deleteDocument(await getAccessToken(), id);
       setDocuments((docs) => docs.filter((d) => d.id !== id));
     } catch (err) {
       alert(`Error: ${err.message}`);
@@ -64,7 +72,7 @@ export function DashboardPage() {
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-white">Your Documents</h1>
-        
+
         <form onSubmit={handleCreate} className="flex gap-2">
           <input
             type="text"
@@ -74,7 +82,7 @@ export function DashboardPage() {
             className="rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-white outline-none focus:border-emerald-500"
             required
           />
-          <select 
+          <select
             value={newLanguage}
             onChange={(e) => setNewLanguage(e.target.value)}
             className="rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-white outline-none focus:border-emerald-500"
@@ -103,12 +111,18 @@ export function DashboardPage() {
           type="text"
           placeholder="Search documents..."
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           className="rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-white outline-none focus:border-emerald-500 w-full max-w-sm"
         />
-        <select 
+        <select
           value={language}
-          onChange={(e) => { setLanguage(e.target.value); setPage(1); }}
+          onChange={(e) => {
+            setLanguage(e.target.value);
+            setPage(1);
+          }}
           className="rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-white outline-none focus:border-emerald-500"
         >
           <option value="">All languages</option>
@@ -134,10 +148,16 @@ export function DashboardPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {documents.map((doc) => (
-            <div key={doc.id} className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 flex flex-col justify-between">
+            <div
+              key={doc.id}
+              className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 flex flex-col justify-between"
+            >
               <div>
                 <div className="flex items-start justify-between">
-                  <Link to={`/editor/${doc.id}`} className="text-lg font-medium text-emerald-400 hover:underline truncate">
+                  <Link
+                    to={`/editor/${doc.id}`}
+                    className="text-lg font-medium text-emerald-400 hover:underline truncate"
+                  >
                     {doc.name}
                   </Link>
                   <span className="text-xs uppercase tracking-wider text-zinc-500 bg-zinc-800 px-2 py-1 rounded">
@@ -147,20 +167,21 @@ export function DashboardPage() {
                 <p className="text-xs text-zinc-400 mt-2">
                   Role: <span className="text-zinc-300">{doc.role}</span>
                 </p>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Owner: {doc.owner?.name}
-                </p>
+                <p className="text-xs text-zinc-400 mt-1">Owner: {doc.owner?.name}</p>
                 <p className="text-xs text-zinc-500 mt-1">
                   Updated {new Date(doc.updatedAt).toLocaleDateString()}
                 </p>
               </div>
-              
+
               <div className="mt-4 pt-4 border-t border-zinc-800 flex justify-between items-center">
                 <Link to={`/editor/${doc.id}`} className="text-sm text-zinc-300 hover:text-white">
                   Open
                 </Link>
-                {doc.role === 'OWNER' && (
-                  <button onClick={() => handleDelete(doc.id)} className="text-sm text-red-400 hover:text-red-300">
+                {can(doc.role, 'document:delete') && (
+                  <button
+                    onClick={() => handleDelete(doc.id)}
+                    className="text-sm text-red-400 hover:text-red-300"
+                  >
                     Delete
                   </button>
                 )}
@@ -174,15 +195,17 @@ export function DashboardPage() {
         <div className="flex gap-2 items-center text-sm mt-4 text-zinc-400">
           <button
             disabled={page <= 1}
-            onClick={() => setPage(p => p - 1)}
+            onClick={() => setPage((p) => p - 1)}
             className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white"
           >
             Prev
           </button>
-          <span>Page {page} of {meta.totalPages}</span>
+          <span>
+            Page {page} of {meta.totalPages}
+          </span>
           <button
             disabled={page >= meta.totalPages}
-            onClick={() => setPage(p => p + 1)}
+            onClick={() => setPage((p) => p + 1)}
             className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white"
           >
             Next

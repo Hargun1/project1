@@ -25,11 +25,9 @@ import { redis } from '../redis/redis.js';
  * @returns {string} a signed JWT
  */
 export function generateAccessToken(user) {
-  return jwt.sign(
-    { sub: user.id, email: user.email, name: user.name },
-    env.JWT_SECRET,
-    { expiresIn: ACCESS_TOKEN_EXPIRY },
-  );
+  return jwt.sign({ sub: user.id, email: user.email, name: user.name }, env.JWT_SECRET, {
+    expiresIn: ACCESS_TOKEN_EXPIRY,
+  });
 }
 
 /**
@@ -78,11 +76,17 @@ export async function storeRefreshSession(userId, jti) {
 }
 
 /**
+ * Read *and* delete a refresh session in one atomic step (rotation).
+ *
+ * A separate GET then DEL would let two requests presenting the same token both
+ * read the session before either deletes it — both would rotate successfully,
+ * which is exactly the replay that rotation exists to stop.
+ *
  * @param {string} jti
- * @returns {Promise<string | null>} the userId, or null if expired/revoked
+ * @returns {Promise<string | null>} the userId, or null if expired/revoked/already used
  */
-export async function getRefreshSession(jti) {
-  return redis.get(`${REFRESH_SESSION_PREFIX}${jti}`);
+export async function consumeRefreshSession(jti) {
+  return redis.getdel(`${REFRESH_SESSION_PREFIX}${jti}`);
 }
 
 /**

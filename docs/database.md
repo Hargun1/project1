@@ -36,6 +36,7 @@ in review. The unique index on `email` is also the login lookup path.
 | `owner_id`   | `uuid` FK → users | `ON DELETE CASCADE` |
 | `name`       | `varchar(255)`    |                     |
 | `language`   | `varchar(32)`     | Monaco language id  |
+| `yjs_state`  | `bytea?`          | Current CRDT state  |
 | `deleted_at` | `timestamptz?`    | **Soft delete**     |
 | `created_at` | `timestamptz`     |                     |
 | `updated_at` | `timestamptz`     |                     |
@@ -45,6 +46,14 @@ membership rows, which turns "I deleted the wrong file" into permanent data
 loss. The cost is that **every read path must filter `deleted_at IS NULL`** —
 forgetting it is the classic soft-delete bug, so the filter belongs in the
 repository layer rather than being repeated in each handler.
+
+`yjs_state` is the live document: `Y.encodeStateAsUpdate()` output, overwritten
+by a debounced save while the document is edited and loaded when it is next
+opened. `NULL` means "never edited". It is excluded from every metadata query
+(Prisma `omit`), so listing documents never drags CRDT state through the
+dashboard. History is a separate, append-only table (below); see
+[collaboration.md](collaboration.md#persistence) for why current state and
+history are kept apart, and why neither is stored as text.
 
 Indexes:
 
@@ -75,14 +84,16 @@ invalid role cannot be persisted even by a buggy code path.
 
 ### `document_revisions`
 
-| Column            | Type                  | Notes                            |
-| ----------------- | --------------------- | -------------------------------- |
-| `id`              | `uuid` PK             |                                  |
-| `document_id`     | `uuid` FK → documents | `ON DELETE CASCADE`              |
-| `created_by`      | `uuid?` FK → users    | `ON DELETE SET NULL`             |
-| `snapshot`        | `bytea`               | `Y.encodeStateAsUpdate()` output |
-| `revision_number` | `integer`             | Per-document, gap-free           |
-| `created_at`      | `timestamptz`         |                                  |
+| Column                 | Type                  | Notes                              |
+| ---------------------- | --------------------- | ---------------------------------- |
+| `id`                   | `uuid` PK             |                                    |
+| `document_id`          | `uuid` FK → documents | `ON DELETE CASCADE`                |
+| `created_by`           | `uuid?` FK → users    | `ON DELETE SET NULL`               |
+| `snapshot`             | `bytea`               | `Y.encodeStateAsUpdate()` output   |
+| `revision_number`      | `integer`             | Per-document, gap-free             |
+| `kind`                 | `RevisionKind` enum   | `AUTO \| MANUAL \| RESTORE`        |
+| `restored_from_number` | `integer?`            | For `RESTORE`: the source revision |
+| `created_at`           | `timestamptz`         |                                    |
 
 `snapshot` is **binary CRDT state, not text.** Text is a lossy projection of a
 Y.Doc: it discards tombstones and client IDs, so a document restored from text
@@ -94,10 +105,18 @@ correct restores are worth both.
 account. `CASCADE` there would erase the history of a shared document because one
 contributor closed their account.
 
-`UNIQUE (document_id, revision_number)` is what makes concurrent snapshot writers
-safe: two processes computing revision _n_ race, one commits, the other gets a
-unique violation and retries with _n+1_. Correctness comes from the constraint,
-not from hoping only one writer exists.
+Revisions are inserted inside the same transaction that saves the live state,
+while holding a `SELECT … FOR UPDATE` lock on the document row. That serialises
+writers across backend instances, so revision _n + 1_ is always computed from
+the committed revision _n_. `UNIQUE (document_id, revision_number)` stays as the
+backstop: if a future code path forgot the lock, a duplicate number would fail
+loudly rather than corrupt history.
+
+`restored_from_number` is a number rather than a foreign key: revision numbers
+are immutable per document, and revision rows are never deleted on their own.
+How revisions are created and why restore is implemented as new operations
+rather than "apply the old snapshot" is in
+[collaboration.md](collaboration.md#revision-history-and-restore-25).
 
 `(document_id, created_at DESC)` serves "show this document's recent revisions".
 
@@ -140,8 +159,10 @@ than a copy per workspace, so that file points dotenv at the root before
 `env("DATABASE_URL")` is resolved. It also replaces the deprecated
 `package.json#prisma` key.
 
-**Status:** one migration (`init`) is committed and applied. Verified against the
-running container: 4 tables, the `Role` enum, the composite primary key on
+**Status:** three migrations are committed and applied: `init`,
+`document_yjs_state` (adds `documents.yjs_state`) and `revision_kind` (adds the
+`RevisionKind` enum, `kind` and `restored_from_number`). For `init`, verified
+against the running container: 4 tables, the `Role` enum, the composite primary key on
 `document_members`, `UNIQUE (document_id, revision_number)`, `snapshot BYTEA`,
 `ON DELETE SET NULL` on `document_revisions.created_by`, and all 9 indexes.
 

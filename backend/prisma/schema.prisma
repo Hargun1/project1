@@ -45,9 +45,15 @@ model Document {
   name     String @db.VarChar(255)
   language String @db.VarChar(32)
 
-  /// Plain-text document content. Phase 4 stores text here for save/load;
-  /// Phase 6 replaces this with Yjs binary snapshots stored in revisions.
-  content String @default("") @db.Text
+  /// The live document's full CRDT state: `Y.encodeStateAsUpdate()` output,
+  /// overwritten on a debounce. NULL means "never edited" (an empty Y.Doc).
+  ///
+  /// This is the *current* state, which the server loads when a document is
+  /// opened. It is deliberately binary, never text: re-creating a Y.Doc from text
+  /// gives every character a new CRDT identity, so a client still holding the old
+  /// state would merge both copies and duplicate the document on reconnect.
+  /// Revision *history* (append-only) lives in `document_revisions` (Phase 9).
+  yjsState Bytes? @map("yjs_state")
 
   /// Soft delete: revisions and membership history survive a "deleted" document.
   /// Every read path must filter on `deletedAt: null`.
@@ -84,6 +90,16 @@ model DocumentMember {
   @@map("document_members")
 }
 
+/// Why a revision exists. Mirrors REVISION_KINDS in @collab/shared.
+enum RevisionKind {
+  /// Periodic checkpoint taken while saving, and when everyone has left.
+  AUTO
+  /// "Save version" pressed by an OWNER or EDITOR.
+  MANUAL
+  /// Created by restoring an older revision (history is append-only).
+  RESTORE
+}
+
 model DocumentRevision {
   id         String @id @default(uuid()) @db.Uuid
   documentId String @map("document_id") @db.Uuid
@@ -96,8 +112,14 @@ model DocumentRevision {
   /// converge correctly.
   snapshot Bytes
 
-  revisionNumber Int      @map("revision_number")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  revisionNumber Int          @map("revision_number")
+  kind           RevisionKind @default(AUTO)
+
+  /// For RESTORE revisions: the revision number whose content was restored.
+  /// A number, not a foreign key: revision numbers are immutable per document,
+  /// and history rows are never deleted on their own.
+  restoredFromNumber Int?     @map("restored_from_number")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   createdBy User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)

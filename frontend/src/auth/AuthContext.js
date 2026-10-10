@@ -4,6 +4,7 @@ import { createContext } from 'react';
  * @typedef {{
  *   user: object | null,
  *   accessToken: string | null,
+ *   getAccessToken: () => Promise<string>,
  *   isAuthenticated: boolean,
  *   isLoading: boolean,
  *   login: (data: { email: string, password: string }) => Promise<void>,

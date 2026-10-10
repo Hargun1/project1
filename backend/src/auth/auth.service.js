@@ -3,7 +3,7 @@ import {
   generateAccessToken,
   generateRefreshToken,
   storeRefreshSession,
-  getRefreshSession,
+  consumeRefreshSession,
   invalidateRefreshSession,
   verifyRefreshToken,
 } from './token.service.js';
@@ -90,14 +90,12 @@ export async function refresh(oldToken) {
     throw AppError.unauthenticated('Invalid or expired refresh token');
   }
 
-  const userId = await getRefreshSession(decoded.jti);
+  // Atomically consume the old session (rotation): a token can be redeemed once.
+  const userId = await consumeRefreshSession(decoded.jti);
   if (!userId) {
     // Session was revoked (logout) or already rotated.
     throw AppError.unauthenticated('Refresh session expired or revoked');
   }
-
-  // Invalidate old session before issuing a new one (rotation).
-  await invalidateRefreshSession(decoded.jti);
 
   const user = await userRepo.findById(userId);
   if (!user) {

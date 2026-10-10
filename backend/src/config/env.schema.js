@@ -50,6 +50,11 @@ export const envSchema = z
     WS_TICKET_TTL_SECONDS: z.coerce.number().int().positive().max(300).default(30),
     /** Idle window before a Y.Doc snapshot is persisted (Phase 9). */
     DOC_SNAPSHOT_DEBOUNCE_MS: z.coerce.number().int().positive().max(60_000).default(2_000),
+    /**
+     * Minimum spacing of automatic revisions while a document is being edited
+     * (Phase 9). Defaults to 5 minutes.
+     */
+    DOC_REVISION_INTERVAL_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(300_000),
     /** Hard cap on a single document's Yjs state (Phase 11). */
     MAX_DOCUMENT_SIZE_BYTES: z.coerce.number().int().positive().default(1_048_576),
 
@@ -83,7 +88,7 @@ export const envSchema = z
  *
  * @param {Record<string, string | undefined>} source usually `process.env`
  * @returns {object} the parsed, defaulted, coerced environment
- */                              
+ */
 export function parseEnv(source) {
   return envSchema.parse(source);
 }

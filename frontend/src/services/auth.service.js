@@ -32,11 +32,24 @@ export async function login(data) {
   });
 }
 
+/** The refresh request currently on the wire, shared by every concurrent caller. */
+let refreshInFlight = null;
+
 /**
+ * Exchange the refresh cookie for a new access token.
+ *
+ * Concurrent callers share one request. The server rotates the refresh token
+ * and accepts each one exactly once, so two simultaneous refreshes (React
+ * StrictMode mounting twice, or the WebSocket client reconnecting while a page
+ * loads) would otherwise race — and the loser would be logged out.
+ *
  * @returns {Promise<{ accessToken: string }>}
  */
-export async function refreshToken() {
-  return apiFetch('/api/auth/refresh', { method: 'POST' });
+export function refreshToken() {
+  refreshInFlight ??= apiFetch('/api/auth/refresh', { method: 'POST' }).finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
 }
 
 /**

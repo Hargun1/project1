@@ -14,6 +14,10 @@
  */
 export * from './api.js';
 export * from './auth.js';
+export * from './encoding.js';
 export * from './health.js';
+export * from './permissions.js';
+export * from './presence.js';
+export * from './revisions.js';
 export * from './roles.js';
 export * from './ws-messages.js';

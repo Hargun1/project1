@@ -26,9 +26,12 @@
     "helmet": "^8.0.0",
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
+    "lib0": "^0.2.119",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
     "ws": "^8.22.0",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33",
     "zod": "^3.24.1"
   },
   "devDependencies": {

@@ -50,3 +50,14 @@ export async function findById(id) {
     select: PUBLIC_SELECT,
   });
 }
+
+/**
+ * Look up a user to invite. Public fields only: unlike `findByEmail`, this is
+ * used outside login, so it must never carry the password hash.
+ *
+ * @param {string} email  already normalised (trimmed, lower-case)
+ * @returns {Promise<object | null>}
+ */
+export async function findPublicByEmail(email) {
+  return prisma.user.findUnique({ where: { email }, select: PUBLIC_SELECT });
+}

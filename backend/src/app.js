@@ -23,10 +23,15 @@ import { documentRouter } from './routes/document.routes.js';
  * Middleware order matters: identify the request, then log it, then parse a
  * bounded body, then route, and only then handle what fell through.
  *
+ * @param {object} [deps]
+ * @param {object} [deps.hub]  collaboration hub; needed by the revision routes that
+ *   act on the live document (restore, save version). Tests that do not touch
+ *   those routes can omit it.
  * @returns {import('express').Express}
  */
-export function createApp() {
+export function createApp({ hub } = {}) {
   const app = express();
+  app.locals.hub = hub ?? null;
 
   app.disable('x-powered-by');
   // One reverse proxy (Nginx) sits in front in production — needed for correct

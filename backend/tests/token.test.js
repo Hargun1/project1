@@ -1,8 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import jwt from 'jsonwebtoken';
-import { generateAccessToken, generateRefreshToken, verifyAccessToken, verifyRefreshToken } from '../src/auth/token.service.js';
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  verifyAccessToken,
+  verifyRefreshToken,
+} from '../src/auth/token.service.js';
 
-const MOCK_USER = { id: '550e8400-e29b-41d4-a716-446655440000', email: 'test@example.com', name: 'Test User' };
+const MOCK_USER = {
+  id: '550e8400-e29b-41d4-a716-446655440000',
+  email: 'test@example.com',
+  name: 'Test User',
+};
 
 describe('token.service', () => {
   describe('access token', () => {
@@ -22,11 +31,7 @@ describe('token.service', () => {
     });
 
     it('rejects an expired token', () => {
-      const token = jwt.sign(
-        { sub: MOCK_USER.id },
-        process.env.JWT_SECRET,
-        { expiresIn: '0s' },
-      );
+      const token = jwt.sign({ sub: MOCK_USER.id }, process.env.JWT_SECRET, { expiresIn: '0s' });
       expect(() => verifyAccessToken(token)).toThrow();
     });
   });

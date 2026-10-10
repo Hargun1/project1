@@ -34,10 +34,7 @@ export async function issueTicket(userId, documentId) {
 
   await redis.set(key, payload, 'EX', env.WS_TICKET_TTL_SECONDS);
 
-  logger.debug(
-    { userId, documentId, ttl: env.WS_TICKET_TTL_SECONDS },
-    'ws ticket issued',
-  );
+  logger.debug({ userId, documentId, ttl: env.WS_TICKET_TTL_SECONDS }, 'ws ticket issued');
 
   return ticket;
 }

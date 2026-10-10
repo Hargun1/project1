@@ -3,12 +3,22 @@ import { env } from './config/env.js';
 import { SERVICE_NAME, SERVICE_VERSION } from './config/constants.js';
 import { logger } from './utils/logger.js';
 import { disconnectDatabase } from './database/prisma.js';
+import { hostname } from 'node:os';
 import { disconnectRedis } from './redis/redis.js';
+import { createRedisBus } from './redis/pubsub.js';
 import { attachWebSocketServer, closeWebSocketServer } from './websocket/ws-server.js';
+import { createCollaborationHub } from './services/collaboration.service.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
-const app = createApp();
+// Collaboration: one hub per process, linked to the other instances through
+// Redis Pub/Sub. The instance id appears in logs, so a multi-instance demo can
+// show which backend served which socket.
+const bus = createRedisBus();
+const hub = createCollaborationHub({ bus, instanceId: `${hostname()}:${env.PORT}` });
+logger.info({ instance: hub.instanceId }, 'collaboration hub started');
+
+const app = createApp({ hub });
 
 const server = app.listen(env.PORT, () => {
   logger.info(
@@ -17,17 +27,17 @@ const server = app.listen(env.PORT, () => {
   );
 });
 
-// ── Phase 5: attach WebSocket server to the same HTTP server ─────────────
-const wss = attachWebSocketServer(server);
+// The WebSocket server shares the HTTP server (and port) that Express uses.
+const wss = attachWebSocketServer(server, { hub });
 
 let shuttingDown = false;
 
 /**
- * Graceful shutdown: close WebSocket connections, stop accepting HTTP requests,
- * release the PostgreSQL pool and Redis connection, then exit.
+ * Graceful shutdown: close WebSocket connections, persist every open document,
+ * stop accepting HTTP requests, release PostgreSQL and Redis, then exit.
  *
- * WebSocket connections are closed first so that in-flight collaboration
- * messages drain before the data stores go away.
+ * Order matters. Sockets close first so no new edits arrive; documents are
+ * flushed while the database pool is still open; only then do the stores go.
  *
  * @param {string} signal
  * @returns {Promise<void>}
@@ -52,7 +62,14 @@ async function shutdown(signal) {
     logger.error({ err: error }, 'error while closing WebSocket server');
   }
 
-  // 2. Stop accepting new HTTP connections.
+  // 2. Persist unsaved document state while PostgreSQL is still reachable.
+  try {
+    await hub.flushAllSessions();
+  } catch (error) {
+    logger.error({ err: error }, 'error while flushing document state');
+  }
+
+  // 3. Stop accepting new HTTP connections.
   server.close(async (closeError) => {
     if (closeError) {
       logger.error({ err: closeError }, 'error while closing HTTP server');
@@ -63,6 +80,7 @@ async function shutdown(signal) {
       logger.error({ err: error }, 'error while disconnecting from PostgreSQL');
     }
     try {
+      await bus.close();
       await disconnectRedis();
     } catch (error) {
       logger.error({ err: error }, 'error while disconnecting from Redis');

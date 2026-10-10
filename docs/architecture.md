@@ -34,7 +34,7 @@ metadata (client IDs, tombstones for deleted characters) so state is larger than
 the text it represents, and the merge result — while always convergent — is not
 always what a human would have chosen for overlapping edits to the same word.
 
-## Update flow (Phase 6)
+## Update flow (implemented in Phase 6, except Redis)
 
 ```
 Alice types
@@ -45,14 +45,17 @@ Monaco onDidChangeModelContent
     ▼
 Y.Text mutation → Y.Doc 'update' event  (a small binary delta, not the file)
     │
-    ▼  WebSocket send (binary)
+    ▼  WebSocket send (JSON envelope, base64 payload)
 Backend instance A
     │
+    ├──▶ refuse if the sender is a VIEWER
     ├──▶ apply to the in-memory Y.Doc for this document
-    ├──▶ broadcast to other sockets on instance A
-    ├──▶ PUBLISH doc:<id> to Redis      ──▶ instance B ──▶ its sockets
-    └──▶ schedule a debounced snapshot  ──▶ PostgreSQL
+    ├──▶ forward to the other sockets on instance A
+    ├──▶ PUBLISH to Redis              ──▶ instance B ──▶ its sockets
+    └──▶ schedule a debounced save     ──▶ documents.yjs_state
 ```
+
+Protocol, reconnection and save-status details: [collaboration.md](collaboration.md).
 
 The payload is always an incremental Yjs update. Sending the whole document per
 keystroke would make bandwidth grow with file size × typing speed, and would
@@ -68,18 +71,21 @@ for documents it currently has open, and publishes updates it receives.
 
 Pub/Sub is fire-and-forget: a message published while an instance is
 disconnected is simply gone. That is acceptable **only** because Redis is not
-the source of truth — a client that reconnects re-syncs from the Y.Doc state,
-and durable state is in PostgreSQL. Using Redis as document storage would mean a
-`FLUSHALL` or an eviction is data loss.
+the source of truth. Instances re-run a state-vector handshake with each other
+whenever they (re)subscribe, so missed messages are recovered, and saves merge
+into PostgreSQL under a row lock, so instances that diverged cannot overwrite
+each other. Using Redis as document storage would mean a `FLUSHALL` or an
+eviction is data loss.
 
-Implemented in Phase 8, and verified by running two backend instances behind
-Nginx and confirming an edit in one browser reaches a browser attached to the
-other instance.
+Implemented in Phase 8 and verified with two real backend processes, including
+stopping Redis mid-session; details in [scaling.md](scaling.md). Running the
+instances behind Nginx is Phase 12.
 
 ## Why PostgreSQL stores binary snapshots
 
-A revision row holds `Y.encodeStateAsUpdate(doc)` in a `BYTEA` column, not
-rendered text. Text is a _projection_ of CRDT state: it discards tombstones and
+The live document (`documents.yjs_state`, Phase 6) and every revision
+(`document_revisions.snapshot`, Phase 9) hold `Y.encodeStateAsUpdate(doc)` in a
+`BYTEA` column, not rendered text. Text is a _projection_ of CRDT state: it discards tombstones and
 client IDs. Restoring from text would produce a document that can no longer
 merge correctly with an old client's updates, and would silently resurrect
 deleted characters in some orderings.
@@ -87,8 +93,12 @@ deleted characters in some orderings.
 Snapshots are written on a debounce (default 2 s of idleness) rather than per
 update, because a keystroke-rate write pattern would make the database the
 bottleneck for a workload that does not need durability at that granularity.
-The trade-off is an explicit bounded loss window: up to `DOC_SNAPSHOT_DEBOUNCE_MS`
-of edits can be lost if a process is killed mid-window. Implemented in Phase 9.
+The trade-off is an explicit bounded loss window: up to
+`DOC_SNAPSHOT_MAX_WAIT_MS` (10 s) of edits can be lost from the server if the
+process is killed mid-window, and connected clients re-upload them on
+reconnect. Revision history (Phase 9) is append-only; restoring writes new
+operations, because re-applying an old CRDT snapshot changes nothing — see
+[collaboration.md](collaboration.md#revision-history-and-restore-25).
 
 ## Authentication boundary (Phases 2, 5)
 

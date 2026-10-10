@@ -14,3 +14,4 @@ process.env.DATABASE_URL =
 process.env.REDIS_URL = 'redis://localhost:6379';
 process.env.JWT_SECRET = 'test-access-secret-value-at-least-32-characters';
 process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-value-at-least-32-characters';
+process.env.DOC_SNAPSHOT_DEBOUNCE_MS = '50';
