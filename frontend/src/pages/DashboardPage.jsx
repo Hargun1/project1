@@ -262,7 +262,7 @@ export function DashboardPage() {
           {documents.map((doc) => (
             <li
               key={doc.id}
-              className="group flex flex-col justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 transition hover:border-zinc-700 hover:bg-zinc-900"
+              className="group flex min-w-0 flex-col justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 transition hover:border-zinc-700 hover:bg-zinc-900"
             >
               <div>
                 <div className="flex items-start justify-between gap-3">

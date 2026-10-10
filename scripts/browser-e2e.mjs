@@ -122,7 +122,8 @@ try {
   await alice.page.selectOption('#share-role', 'EDITOR');
   await alice.page.getByRole('button', { name: 'Invite' }).click();
   const listed = await alice.page
-    .getByText(bob.email)
+    .getByText(bob.email, { exact: true })
+    .first()
     .waitFor({ timeout: 10_000 })
     .then(
       () => true,
