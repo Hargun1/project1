@@ -1,0 +1,12 @@
+# Every text file is stored and checked out with LF line endings, on every
+# platform. Shell scripts copied into images (nginx/40-tls.sh) fail with CRLF
+# ("/bin/sh\r"), and Prettier enforces LF in CI.
+* text=auto eol=lf
+
+# Binary files are never converted.
+*.png binary
+*.jpg binary
+*.ico binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
