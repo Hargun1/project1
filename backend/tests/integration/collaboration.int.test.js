@@ -106,8 +106,7 @@ describe('editing across instances', () => {
     }
 
     await eventually(
-      () =>
-        adaClient.text.length === 80 && adaClient.text.toString() === bobClient.text.toString(),
+      () => adaClient.text.length === 80 && adaClient.text.toString() === bobClient.text.toString(),
       5_000,
     );
     const merged = adaClient.text.toString();

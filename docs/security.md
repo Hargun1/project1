@@ -216,6 +216,21 @@ the host for development tools; a cloud deployment would not.)
 **Images:** run as non-root (`node`), code owned by root, no dev tools or
 compilers in the runtime image, `.env` excluded from every build context.
 
+## Found by the Phase 13 tests
+
+- **Duplicate-registration race:** two sign-ups for one email at the same time
+  both passed the "already registered?" check, and the second insert hit the
+  unique index unhandled (500). The repository now maps the unique violation to
+  a 409. The index, not the check, is the guarantee.
+- **Ticket single use:** `consumeTicket` fell back to `GET` + `DEL` on any
+  `GETDEL` error. That pair is not atomic, so two racing handshakes could both be
+  admitted with one ticket (shown by a mutation test). The fallback was removed:
+  Redis 7 is pinned, and a Redis error now fails the handshake with a retryable
+  close code.
+
+Both are covered by integration tests against real PostgreSQL and Redis
+([testing.md](testing.md)).
+
 ## Planned, not implemented
 
 | Control                                                     | Phase |

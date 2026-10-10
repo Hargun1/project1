@@ -10,14 +10,16 @@ server-side lock, edits are fanned out **across backend instances** with Redis
 Pub/Sub so the system scales horizontally, and document state is persisted as
 **binary Yjs snapshots** so a restored document keeps its merge history.
 
-> **Status: Phase 12 of 15 (Docker + Nginx) complete.** Accounts, documents,
+> **Status: Phase 13 of 15 (Testing) complete.** Accounts, documents,
 > sharing with OWNER / EDITOR / VIEWER roles, the Monaco editor,
 > ticket-authenticated WebSockets, real-time CRDT editing, live presence and
 > revision history with restore work end to end, across **several backend
 > instances** linked by Redis Pub/Sub, with rate limiting, document size caps,
 > CSRF and WebSocket-origin checks. One command runs the whole system in Docker:
-> Nginx serving the app and load-balancing two backend instances. Cloud
-> deployment is _not_ built yet. See [Build phases](#build-phases).
+> Nginx serving the app and load-balancing two backend instances. About 330
+> automated checks, from unit tests to two real browsers, run in CI
+> ([docs/testing.md](docs/testing.md)). Cloud deployment is _not_ built yet. See
+> [Build phases](#build-phases).
 
 ## Architecture
 
@@ -184,22 +186,26 @@ trust). `.env.example` lists them all with comments.
 
 ## Scripts
 
-| Command                | What it does                                         |
-| ---------------------- | ---------------------------------------------------- |
-| `npm run dev:backend`  | Express with `node --watch` (no transpiler)          |
-| `npm run dev:frontend` | Vite dev server on :5173, proxying the API to :4000  |
-| `npm run build`        | Bundles the frontend (nothing else needs building)   |
-| `npm run lint`         | ESLint 9 flat config over the whole monorepo         |
-| `npm test`             | Vitest in each workspace that has tests              |
-| `npm run db:migrate`   | Creates/applies a development migration              |
-| `npm run db:studio`    | Prisma Studio                                        |
-| `npm run infra:up`     | `docker compose up -d` (PostgreSQL + Redis)          |
-| `npm run infra:down`   | Stops the containers, keeps the volume               |
-| `npm run infra:reset`  | Stops the containers **and deletes the data volume** |
-| `npm run stack:up`     | Whole system in Docker on :8080, waits until healthy |
-| `npm run stack:smoke`  | Smoke test of the running stack through Nginx        |
-| `npm run stack:logs`   | Follows every container's logs                       |
-| `npm run stack:down`   | Stops the stack, keeps the data volume               |
+| Command                    | What it does                                         |
+| -------------------------- | ---------------------------------------------------- |
+| `npm run dev:backend`      | Express with `node --watch` (no transpiler)          |
+| `npm run dev:frontend`     | Vite dev server on :5173, proxying the API to :4000  |
+| `npm run build`            | Bundles the frontend (nothing else needs building)   |
+| `npm run lint`             | ESLint 9 flat config over the whole monorepo         |
+| `npm test`                 | Unit tests (Vitest) in every workspace               |
+| `npm run test:integration` | Backend against real PostgreSQL + Redis (`infra:up`) |
+| `npm run test:coverage`    | Unit + integration with coverage thresholds          |
+| `npm run db:migrate`       | Creates/applies a development migration              |
+| `npm run db:studio`        | Prisma Studio                                        |
+| `npm run infra:up`         | `docker compose up -d` (PostgreSQL + Redis)          |
+| `npm run infra:down`       | Stops the containers, keeps the volume               |
+| `npm run infra:reset`      | Stops the containers **and deletes the data volume** |
+| `npm run stack:up`         | Whole system in Docker on :8080, waits until healthy |
+| `npm run stack:smoke`      | Smoke test of the running stack through Nginx        |
+| `npm run stack:e2e`        | Two headless Chrome users through the real UI        |
+| `npm run stack:resilience` | Stops containers and Redis; checks recovery          |
+| `npm run stack:logs`       | Follows every container's logs                       |
+| `npm run stack:down`       | Stops the stack, keeps the data volume               |
 
 ## When Redis is unavailable
 
@@ -260,6 +266,8 @@ backend/
   tests/                Vitest + supertest; collaboration and cluster tests drive
                         real WebSocket servers (two instances over an in-memory
                         bus that can simulate a Redis outage) with real Yjs clients
+  tests/integration/    The same against real PostgreSQL + Redis: auth, documents,
+                        collaboration across instances, concurrency
 
 frontend/
   src/auth/             AuthProvider (in-memory access token, silent refresh)
@@ -267,11 +275,12 @@ frontend/
   src/websocket/        Socket transport: tickets, keepalive, backoff
   src/collaboration/    Yjs sync protocol, save status, escaped cursor CSS
   src/hooks/            usePresence (who is here, without per-cursor renders)
-  tests/                Vitest unit tests for pure modules
+  tests/                Vitest: WebSocket transport, HTTP client, pure modules
   src/pages/            Status, login, register, dashboard, editor, history
   src/utils/            Language list, Monaco worker/bundling setup
 
-docs/                   Architecture, database, and per-phase deep dives
+scripts/                Stack smoke, browser end-to-end and resilience tests
+docs/                   Architecture, database, testing, and per-phase deep dives
 ```
 
 ## Security posture
@@ -328,7 +337,7 @@ belong to the cloud deployment (Phase 14).
 | 10  | Role-based access       | ✅ done |
 | 11  | Security hardening      | ✅ done |
 | 12  | Docker + Nginx          | ✅ done |
-| 13  | Testing                 | —       |
+| 13  | Testing                 | ✅ done |
 | 14  | AWS + scaling proof     | —       |
 | 15  | Polish + documentation  | —       |
 

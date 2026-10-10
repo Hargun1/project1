@@ -171,7 +171,11 @@ try {
   // ── Browser health ─────────────────────────────────────────────────────────
   for (const user of [alice, bob]) {
     const violations = await user.page.evaluate(() => window.cspViolations);
-    check(`no CSP violations for ${user.name}`, violations.length === 0, violations.join('; '));
+    check(
+      `no CSP violations for ${user.name}`,
+      violations.length === 0,
+      `${violations.length} total: ${[...new Set(violations)].join('; ')}`,
+    );
     // The one expected failure: the silent refresh before the first sign-in.
     const unexpected = user.failedRequests.filter((r) => r !== '401 /api/auth/refresh');
     check(`no failed requests for ${user.name}`, unexpected.length === 0, unexpected.join(', '));
@@ -179,7 +183,7 @@ try {
     check(
       `no console errors for ${user.name}`,
       errors.length === 0,
-      errors.slice(0, 3).join(' | '),
+      [...new Set(errors.map((text) => text.slice(0, 120)))].slice(0, 3).join(' | '),
     );
   }
 

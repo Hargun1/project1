@@ -171,9 +171,7 @@ describe('members', () => {
     const list = await api(a, bob).get(members);
     expect(list.status).toBe(200);
     expect(list.body.members.map((m) => m.role).sort()).toEqual(['EDITOR', 'OWNER']);
-    expect((await api(a, bob).post(members, { email: cy.email, role: 'VIEWER' })).status).toBe(
-      403,
-    );
+    expect((await api(a, bob).post(members, { email: cy.email, role: 'VIEWER' })).status).toBe(403);
     // ...but anyone may leave.
     expect((await api(a, bob).delete(`${members}/${bob.id}`)).status).toBe(204);
   });

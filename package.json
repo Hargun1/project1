@@ -33,6 +33,7 @@
     "stack:logs": "docker compose --profile app logs -f --tail=100",
     "stack:smoke": "node scripts/smoke-stack.mjs",
     "stack:e2e": "node scripts/browser-e2e.mjs",
+    "stack:resilience": "node scripts/resilience-stack.mjs",
     "test:integration": "npm run test:integration --workspace @collab/backend",
     "test:coverage": "npm run test:coverage --workspace @collab/backend"
   },

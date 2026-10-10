@@ -14,6 +14,11 @@ export default defineConfig({
   test: {
     projects: ['./vitest.config.js', './vitest.integration.config.js'],
     fileParallelism: false,
+    // One worker process for every file (files still get fresh module state).
+    // With a process per file, about one run in three died at start-up with
+    // ERR_IPC_CHANNEL_CLOSED while coverage was being collected; files run one
+    // at a time here anyway, so nothing is lost.
+    poolOptions: { forks: { singleFork: true } },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.js'],
@@ -22,6 +27,9 @@ export default defineConfig({
       exclude: ['src/server.js'],
       reporter: ['text-summary', 'text', 'html'],
       reportsDirectory: 'coverage',
+      // A few points under what Phase 13 measured (94.8 / 88.7 / 94.7 / 94.8),
+      // so a change that drops untested code fails CI, without flaking on noise.
+      thresholds: { statements: 90, branches: 85, functions: 90, lines: 90 },
     },
   },
 });

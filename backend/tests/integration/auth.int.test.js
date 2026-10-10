@@ -150,7 +150,10 @@ describe('access tokens', () => {
     const a = await startInstance('a');
     const ada = await registerUser(a, 'Ada');
     const claims = { sub: ada.id, email: ada.email, name: ada.name };
-    const expired = jwt.sign({ ...claims, exp: Math.floor(Date.now() / 1000) - 60 }, process.env.JWT_SECRET);
+    const expired = jwt.sign(
+      { ...claims, exp: Math.floor(Date.now() / 1000) - 60 },
+      process.env.JWT_SECRET,
+    );
     // A refresh-secret token must never pass as an access token.
     const otherSecret = jwt.sign(claims, process.env.JWT_REFRESH_SECRET, { expiresIn: '15m' });
 

@@ -150,6 +150,14 @@ snippets ([`proxy-headers.conf`](../nginx/proxy-headers.conf),
   restarted one is found again (measured: under 2 s, even with swapped IPs) and
   Nginx starts even if a backend is not up yet. Immediately after a restart there
   can be a few seconds in which Nginx routes to fewer instances than are running.
+- **Failover is not seamless per request** (measured in Phase 13). In the first
+  seconds after an instance stops, a request Nginx has already sent towards it
+  can fail once (503/504 after the 3 s connect timeout) instead of being retried
+  on the other instance; the Nginx log showed this for requests in flight while
+  the stopped container dropped out of DNS. Clients recover: the browser client
+  retries ticket requests and reconnects with backoff, so a user sees one
+  reconnect. The resilience test connects the same way and reports the retries
+  it needed (1).
 
 ### Headers and limits
 
@@ -209,7 +217,8 @@ cookie; the backend reusing Nginx's request id; `no-store` on the API; JSON
 error envelope through the proxy; four WebSocket clients spread over both
 instances, an edit reaching all of them, a late joiner receiving the document.
 
-Failure scenarios on the running stack (21 checks, 3 consecutive passing runs):
+Failure scenarios on the running stack, `npm run stack:resilience` (21 checks;
+see [testing.md](testing.md)):
 
 - `docker stop` → SIGTERM reaches Node, sockets close with 4008, and an edit
   made 300 ms earlier (inside the 2 s save debounce) is still there after
@@ -218,7 +227,8 @@ Failure scenarios on the running stack (21 checks, 3 consecutive passing runs):
 - Both backends down → the API answers JSON `503 SERVICE_UNAVAILABLE` with
   `Retry-After`; Nginx keeps serving the frontend.
 - One backend stopped → only its sockets close, they reconnect to the other
-  instance and editing continues; 20/20 API calls succeed.
+  instance (one retry, see above) and editing continues; 20/20 API calls
+  succeed.
 - The stopped backend restarts → Nginx sends it traffic again.
 - Redis stopped → `/readyz` 503 naming `redis`, `/healthz` 200, Docker reports
   both backends healthy; Redis back → ready again.
@@ -226,9 +236,10 @@ Failure scenarios on the running stack (21 checks, 3 consecutive passing runs):
   `RATE_LIMITED` and `Retry-After`.
 - No ticket in the access log, no health probes in it, compact backend lines.
 
-Two real browsers (headless Chrome) on the production build: Monaco renders and
-both users see each other's typing, with **zero CSP violations**, served by
-different backend instances (backend logs).
+Two real browsers on the production build, `npm run stack:e2e` (15 checks, also
+in CI): sign-up, dashboard and Share dialog through the real UI, both users see
+each other's typing and presence, a reload keeps the session and the text,
+**zero CSP violations**, served by different backend instances (backend logs).
 
 ## Troubleshooting
 
