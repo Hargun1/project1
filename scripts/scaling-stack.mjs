@@ -232,6 +232,13 @@ try {
     removedIp,
   );
   for (const client of [...clients, ...back]) client.close();
+} catch (err) {
+  // A step that throws (a compose command, a connection that never syncs) is a failure too.
+  check(
+    'the run finished without an unexpected error',
+    false,
+    String(err.message).split(/\r?\n/).slice(0, 3).join(' | '),
+  );
 } finally {
   compose('up -d --no-build --wait --scale backend=2');
 }
