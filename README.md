@@ -16,7 +16,7 @@ The interesting part is the correctness problem underneath the UI:
 > **Status:** all 15 build phases are done, except that the app is **not deployed
 > publicly**. There was no AWS account; the deployment plan is written in
 > [docs/aws.md](docs/aws.md), and the production layout was rehearsed locally.
-> Everything else runs and is tested: about 355 automated checks run in CI,
+> Everything else runs and is tested: about 359 automated checks run in CI,
 > from unit tests to two real browsers and a scale-out/scale-in test.
 
 **Contents:**
@@ -66,8 +66,9 @@ Each sees the other's text and named cursor as they type. Recorded with
 - **Save status** (`Saved`, `Saving…`, `Save failed`, `Offline`) and a
   connection indicator. Both are honest: "Saved" means PostgreSQL confirmed this
   exact state.
-- **Dashboard** with search, a language filter and pagination; the language is
-  inferred from the file name.
+- **Dashboard** with search, filters by language and by owner ("Owned by me" /
+  "Shared with me"), and pagination. The language is inferred from the file
+  name, and owners rename a document inline from the editor.
 - **Production-shaped operations:** HTTPS through Nginx, N backend replicas,
   health checks, graceful shutdown, rate limits, a document size cap and
   structured logs.
@@ -382,9 +383,9 @@ Details: [docs/deployment.md](docs/deployment.md).
 | Layer                                             | Command                    | Checks | In CI |
 | ------------------------------------------------- | -------------------------- | ------ | ----- |
 | Unit tests (shared / backend / frontend)          | `npm test`                 | 277    | ✅    |
-| Integration: real PostgreSQL + Redis, 2 instances | `npm run test:integration` | 32     | ✅    |
+| Integration: real PostgreSQL + Redis, 2 instances | `npm run test:integration` | 33     | ✅    |
 | Smoke test of the Docker stack over HTTPS         | `npm run stack:smoke`      | 20     | ✅    |
-| Two real browsers through the UI                  | `npm run stack:e2e`        | 17     | ✅    |
+| Two real browsers through the UI                  | `npm run stack:e2e`        | 20     | ✅    |
 | Scale out to 3 replicas and back                  | `npm run stack:scale`      | 9      | ✅    |
 | Resilience: stop instances and Redis              | `npm run stack:resilience` | 21     | local |
 
@@ -453,6 +454,8 @@ Details: [docs/security.md](docs/security.md).
   fail open).
 - **Failover per request:** right after an instance stops, one request can fail
   once. Clients retry, so a user sees one reconnect.
+- **Renames are not live:** other collaborators see a new document name the
+  next time they open the document. The text itself is always live.
 - **Scope:** one file per document, 8 languages, no email verification or
   password reset, no metrics dashboard. React components are tested only
   through the browser test.

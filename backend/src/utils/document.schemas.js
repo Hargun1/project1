@@ -18,6 +18,11 @@ export const listDocumentsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().max(255).optional(),
   language: z.string().max(32).optional(),
+  /**
+   * Filter by owner (§32, §8 "owned documents / shared documents"):
+   * `me` = documents I own, `others` = documents shared with me.
+   */
+  owner: z.enum(['all', 'me', 'others']).default('all'),
 });
 
 // ── Members (Phase 10) ──────────────────────────────────────────────────────

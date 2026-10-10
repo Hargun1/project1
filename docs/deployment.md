@@ -289,7 +289,7 @@ see [testing.md](testing.md)):
   `RATE_LIMITED` and `Retry-After`.
 - No ticket in the access log, no health probes in it, compact backend lines.
 
-Two real browsers on the production build, `npm run stack:e2e` (15 checks, also
+Two real browsers on the production build, `npm run stack:e2e` (20 checks, also
 in CI): sign-up, dashboard and Share dialog through the real UI, both users see
 each other's typing and presence, a reload keeps the session and the text,
 **zero CSP violations**, served by different backend instances (backend logs).

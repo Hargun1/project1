@@ -15,6 +15,7 @@ import { buildCursorCss } from '../collaboration/cursor-styles.js';
 import { groupByUser, usePresence } from '../hooks/usePresence.js';
 import { CollaboratorAvatars, CollaboratorList } from '../components/Collaborators.jsx';
 import { ShareDialog } from '../components/ShareDialog.jsx';
+import { DocumentTitle } from '../components/DocumentTitle.jsx';
 import { useToast } from '../toast/toast-context.js';
 import { roleLabel } from '../utils/roles.js';
 
@@ -206,6 +207,24 @@ export function EditorPage() {
     }
   };
 
+  // ── Rename (OWNER only — enforced by the server) ─────────────────────
+  // Other collaborators see the new name the next time they load the document.
+  const handleRename = async (name) => {
+    try {
+      const { document: updated } = await docService.updateDocument(
+        await getAccessToken(),
+        documentId,
+        { name },
+      );
+      setDoc((current) => (current ? { ...current, name: updated.name } : current));
+      toast.success(`Renamed to "${updated.name}"`);
+      return true;
+    } catch (err) {
+      toast.error(`Could not rename: ${err.message}`);
+      return false;
+    }
+  };
+
   const handleLanguageChange = async (next) => {
     const previous = language;
     setLanguage(next);
@@ -277,9 +296,11 @@ export function EditorPage() {
           </Link>
 
           <div className="min-w-0">
-            <h1 className="truncate text-sm font-semibold text-white" title={doc.name}>
-              {doc.name}
-            </h1>
+            <DocumentTitle
+              name={doc.name}
+              canRename={can(role, 'document:rename')}
+              onRename={handleRename}
+            />
             {doc.owner && <p className="truncate text-xs text-zinc-500">by {doc.owner.name}</p>}
           </div>
         </div>

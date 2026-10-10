@@ -20,13 +20,14 @@ export async function createDocument(accessToken, data) {
  */
 export async function listDocuments(
   accessToken,
-  { page = 1, limit = 20, search = '', language = '' } = {},
+  { page = 1, limit = 20, search = '', language = '', owner = 'all' } = {},
 ) {
   const params = new URLSearchParams();
   if (page) params.set('page', page);
   if (limit) params.set('limit', limit);
   if (search) params.set('search', search);
   if (language) params.set('language', language);
+  if (owner && owner !== 'all') params.set('owner', owner);
 
   return apiFetch(`/api/documents?${params.toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}` },

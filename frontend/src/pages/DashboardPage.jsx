@@ -8,6 +8,13 @@ import { LANGUAGE_OPTIONS, languageFromFileName, languageLabel } from '../utils/
 import { roleLabel } from '../utils/roles.js';
 import { formatRelative } from '../utils/time.js';
 
+/** Ownership filter (§8, §32): everything, documents I own, documents shared with me. */
+const OWNER_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'me', label: 'Owned by me' },
+  { value: 'others', label: 'Shared with me' },
+];
+
 const FIELD =
   'rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-emerald-500';
 
@@ -28,6 +35,7 @@ export function DashboardPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [language, setLanguage] = useState('');
+  const [owner, setOwner] = useState('all');
   const [reloadKey, setReloadKey] = useState(0);
 
   const [creating, setCreating] = useState(false);
@@ -45,6 +53,7 @@ export function DashboardPage() {
           page,
           search,
           language,
+          owner,
         });
         if (cancelled) return;
         setDocuments(res.data);
@@ -60,7 +69,7 @@ export function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [getAccessToken, page, search, language, reloadKey]);
+  }, [getAccessToken, page, search, language, owner, reloadKey]);
 
   const handleNameChange = (value) => {
     setNewName(value);
@@ -96,7 +105,7 @@ export function DashboardPage() {
     }
   };
 
-  const filtering = search !== '' || language !== '';
+  const filtering = search !== '' || language !== '' || owner !== 'all';
 
   return (
     <div className="space-y-8">
@@ -153,40 +162,65 @@ export function DashboardPage() {
         </form>
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row" role="search">
-        <label htmlFor="document-search" className="sr-only">
-          Search documents
-        </label>
-        <input
-          id="document-search"
-          type="search"
-          placeholder="Search by name…"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          className={`${FIELD} w-full sm:max-w-sm`}
-        />
-        <label htmlFor="document-language-filter" className="sr-only">
-          Filter by language
-        </label>
-        <select
-          id="document-language-filter"
-          value={language}
-          onChange={(e) => {
-            setLanguage(e.target.value);
-            setPage(1);
-          }}
-          className={FIELD}
+      <div className="space-y-3">
+        <div
+          className="inline-flex rounded-md border border-zinc-800 bg-zinc-900 p-0.5 text-sm"
+          role="group"
+          aria-label="Show documents"
         >
-          <option value="">All languages</option>
-          {LANGUAGE_OPTIONS.map(({ value, label }) => (
-            <option key={value} value={value}>
+          {OWNER_FILTERS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={owner === value}
+              onClick={() => {
+                setOwner(value);
+                setPage(1);
+              }}
+              className={`rounded px-3 py-1.5 transition ${
+                owner === value ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-100'
+              }`}
+            >
               {label}
-            </option>
+            </button>
           ))}
-        </select>
+        </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row" role="search">
+          <label htmlFor="document-search" className="sr-only">
+            Search documents
+          </label>
+          <input
+            id="document-search"
+            type="search"
+            placeholder="Search by name…"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            className={`${FIELD} w-full sm:max-w-sm`}
+          />
+          <label htmlFor="document-language-filter" className="sr-only">
+            Filter by language
+          </label>
+          <select
+            id="document-language-filter"
+            value={language}
+            onChange={(e) => {
+              setLanguage(e.target.value);
+              setPage(1);
+            }}
+            className={FIELD}
+          >
+            <option value="">All languages</option>
+            {LANGUAGE_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -220,6 +254,7 @@ export function DashboardPage() {
           onClear={() => {
             setSearch('');
             setLanguage('');
+            setOwner('all');
           }}
         />
       ) : (

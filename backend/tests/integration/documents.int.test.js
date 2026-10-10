@@ -57,6 +57,26 @@ describe('documents', () => {
     expect(search.body.data.map((d) => d.name)).toEqual(['alpha.js']);
   });
 
+  it('filters by owner: documents I own vs documents shared with me', async () => {
+    const a = await startInstance('a');
+    const ada = await registerUser(a, 'Ada');
+    const bob = await registerUser(a, 'Bob');
+    await createDocument(a, ada, 'mine-1.js');
+    await createDocument(a, ada, 'mine-2.js');
+    const fromBob = await createDocument(a, bob, 'from-bob.js');
+    await share(a, bob, fromBob.id, ada, 'EDITOR');
+
+    const names = async (query) =>
+      (await api(a, ada).get(`/api/documents${query}`)).body.data.map((d) => d.name).sort();
+
+    expect(await names('')).toEqual(['from-bob.js', 'mine-1.js', 'mine-2.js']);
+    expect(await names('?owner=me')).toEqual(['mine-1.js', 'mine-2.js']);
+    expect(await names('?owner=others')).toEqual(['from-bob.js']);
+    const meta = (await api(a, ada).get('/api/documents?owner=others')).body.meta;
+    expect(meta.total).toBe(1);
+    expect((await api(a, ada).get('/api/documents?owner=someone')).status).toBe(422);
+  });
+
   it('refuses non-members (403), unknown ids (404) and malformed ids (404)', async () => {
     const a = await startInstance('a');
     const ada = await registerUser(a, 'Ada');

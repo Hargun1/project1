@@ -19,13 +19,14 @@ export async function getDocument(userId, documentId) {
   return { ...document, role };
 }
 
-export async function listDocuments(userId, { page, limit, search, language }) {
+export async function listDocuments(userId, { page, limit, search, language, owner }) {
   const skip = (page - 1) * limit;
   const { documents, total } = await docRepo.listUserDocuments(userId, {
     skip,
     take: limit,
     search,
     language,
+    owner,
   });
 
   const data = documents.map((doc) => {

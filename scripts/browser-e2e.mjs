@@ -139,6 +139,29 @@ try {
     () => false,
   );
   check("the shared document appears on Bob's dashboard", onDashboard);
+
+  // ── Owner filter (§32): shared with Bob, not owned by him ──────────────────
+  await bob.page.getByRole('button', { name: 'Owned by me' }).click();
+  const noneOwned = await bob.page
+    .getByText('No documents match')
+    .waitFor({ timeout: 10_000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  await bob.page.getByRole('button', { name: 'Shared with me' }).click();
+  const sharedListed = await bob.page
+    .getByRole('link', { name: docName })
+    .first()
+    .waitFor({ timeout: 10_000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  check(
+    'the owner filter separates "Owned by me" from "Shared with me"',
+    noneOwned && sharedListed,
+  );
   await link.click();
   await bob.page.waitForSelector(editorLines, { timeout: 20_000 });
 
@@ -182,13 +205,50 @@ try {
       (await waitForText(alice, 'const fromBob = 2;')),
   );
 
+  // ── Rename (owner only): Escape cancels, Enter saves exactly once ──────────
+  let renameRequests = 0;
+  alice.page.on('request', (request) => {
+    if (request.method() === 'PATCH' && request.url().includes('/api/documents/')) {
+      renameRequests += 1;
+    }
+  });
+  const newName = `renamed-${docName}`;
+  await alice.page.getByRole('button', { name: docName, exact: true }).click();
+  await alice.page.fill('#document-title-input', 'should-not-be-saved.js');
+  await alice.page.keyboard.press('Escape');
+  await alice.page.waitForTimeout(500);
+  const cancelled =
+    renameRequests === 0 &&
+    (await alice.page.getByRole('button', { name: docName, exact: true }).count()) === 1;
+  await alice.page.getByRole('button', { name: docName, exact: true }).click();
+  await alice.page.fill('#document-title-input', newName);
+  await alice.page.keyboard.press('Enter');
+  const renamed = await alice.page
+    .getByRole('button', { name: newName, exact: true })
+    .waitFor({ timeout: 10_000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  await alice.page.waitForTimeout(500);
+  check(
+    'the owner renames from the editor title (Escape cancels, Enter saves once)',
+    cancelled && renamed && renameRequests === 1,
+    `${renameRequests} PATCH request(s)`,
+  );
+  check(
+    'an editor sees the title as text, not a rename button',
+    (await bob.page.getByRole('button', { name: docName, exact: true }).count()) === 0 &&
+      (await bob.page.getByRole('heading', { name: docName }).count()) === 1,
+  );
+
   // ── Phone-sized screen: nothing wider than the viewport (Phase 15) ────────
   await bob.page.setViewportSize({ width: 390, height: 844 });
   const overflows = async () =>
     bob.page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   const editorOverflows = await overflows();
   await bob.page.goto(`${BASE}/dashboard`);
-  await bob.page.getByRole('link', { name: docName }).first().waitFor({ timeout: 10_000 });
+  await bob.page.getByRole('link', { name: newName }).first().waitFor({ timeout: 10_000 });
   const dashboardOverflows = await overflows();
   check(
     'on a 390 px screen the editor and dashboard need no horizontal scrolling',

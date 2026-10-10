@@ -50,7 +50,7 @@ export async function getDocumentWithRole(id, userId) {
   return { document: doc, role: member?.role ?? null };
 }
 
-export async function listUserDocuments(userId, { skip, take, search, language }) {
+export async function listUserDocuments(userId, { skip, take, search, language, owner = 'all' }) {
   const where = {
     deletedAt: null,
     members: { some: { userId } },
@@ -61,6 +61,12 @@ export async function listUserDocuments(userId, { skip, take, search, language }
   }
   if (language) {
     where.language = language;
+  }
+  // Served by the (owner_id, deleted_at) index.
+  if (owner === 'me') {
+    where.ownerId = userId;
+  } else if (owner === 'others') {
+    where.ownerId = { not: userId };
   }
 
   const [documents, total] = await Promise.all([

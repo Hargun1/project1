@@ -10,10 +10,10 @@
 | --------------------- | -------------------------- | ----- | ------------------------- | ----- |
 | Unit (shared)         | `npm test`                 | 57    | nothing                   | ✅    |
 | Unit (backend)        | `npm test`                 | 169   | nothing                   | ✅    |
-| Unit (frontend)       | `npm test`                 | 38    | nothing                   | ✅    |
-| Integration (backend) | `npm run test:integration` | 32    | PostgreSQL + Redis        | ✅    |
+| Unit (frontend)       | `npm test`                 | 51    | nothing                   | ✅    |
+| Integration (backend) | `npm run test:integration` | 33    | PostgreSQL + Redis        | ✅    |
 | Stack smoke           | `npm run stack:smoke`      | 20    | the Docker stack          | ✅    |
-| Browser end-to-end    | `npm run stack:e2e`        | 15    | the Docker stack + Chrome | ✅    |
+| Browser end-to-end    | `npm run stack:e2e`        | 20    | the Docker stack + Chrome | ✅    |
 | Scaling (Phase 14)    | `npm run stack:scale`      | 9     | the Docker stack          | ✅    |
 | Resilience            | `npm run stack:resilience` | 21    | the Docker stack          | local |
 
@@ -64,7 +64,7 @@ Redis. Files run one at a time.
 | File                        | What it proves                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auth.int.test.js`          | bcrypt hash stored, email normalised, one account per email (also under a race), login, `/me`, refresh rotation and replay refusal (also across instances), logout, invalid/expired/foreign-secret tokens, per-email login limit shared by two instances                                                                                                       |
-| `documents.int.test.js`     | create + OWNER membership in one transaction, listing (membership, order, pagination, search), 403/404 rules, owner-only rename/delete, soft delete, invite/role/remove, one-owner rules, concurrent invites, read-only member list                                                                                                                            |
+| `documents.int.test.js`     | create + OWNER membership in one transaction, listing (membership, order, pagination, search, owner filter), 403/404 rules, owner-only rename/delete, soft delete, invite/role/remove, one-owner rules, concurrent invites, read-only member list                                                                                                              |
 | `collaboration.int.test.js` | tickets are single-use (also two racing handshakes, also across instances), concurrent typing on two instances converges and is stored, offline edits merge after reconnecting elsewhere, a full restart, a viewer's edit refused and never stored, live revocation across instances (4003/4004), the size cap, save + restore seen live on the other instance |
 | `concurrency.int.test.js`   | partitioned instances saving at the same moment both survive (row lock + merge), six writers on two instances at random positions converge and are stored, racing "save version" creates exactly one revision, revision numbers stay gap-free                                                                                                                  |
 
