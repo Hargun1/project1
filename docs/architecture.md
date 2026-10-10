@@ -1,8 +1,8 @@
 # Architecture
 
-This document explains _why_ the system is shaped the way it is. Where a
-decision is not yet implemented, it is marked with the phase that implements it,
-so nothing here reads as a claim about working code.
+This document explains _why_ the system is shaped the way it is. Everything
+described here is implemented and tested; the phase markers say when each part
+was built. The one thing not done is a public deployment ([aws.md](aws.md)).
 
 ## The problem
 
@@ -34,7 +34,7 @@ metadata (client IDs, tombstones for deleted characters) so state is larger than
 the text it represents, and the merge result — while always convergent — is not
 always what a human would have chosen for overlapping edits to the same word.
 
-## Update flow (implemented in Phase 6, except Redis)
+## Update flow (Phase 6; across instances since Phase 8)
 
 ```
 Alice types
@@ -48,7 +48,7 @@ Y.Text mutation → Y.Doc 'update' event  (a small binary delta, not the file)
     ▼  WebSocket send (JSON envelope, base64 payload)
 Backend instance A
     │
-    ├──▶ refuse if the sender is a VIEWER
+    ├──▶ refuse if the sender is a VIEWER, too fast, or the document is full
     ├──▶ apply to the in-memory Y.Doc for this document
     ├──▶ forward to the other sockets on instance A
     ├──▶ PUBLISH to Redis              ──▶ instance B ──▶ its sockets

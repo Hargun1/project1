@@ -1,13 +1,24 @@
 @import 'tailwindcss';
 
-/* Editor-style dark surface by default; Phase 15 owns the full design pass. */
+/* Editor-style dark surface everywhere. */
 html,
 body,
 #root {
   min-height: 100%;
 }
 
+/*
+ * A visible keyboard-focus ring on every interactive element (accessibility,
+ * Phase 15). :where() keeps it at zero specificity, so components that style
+ * their own focus (inputs change border colour) still win.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid rgb(52 211 153 / 0.7);
+  outline-offset: 2px;
+}
+
 body {
+  color-scheme: dark;
   font-family:
     ui-sans-serif,
     system-ui,

@@ -1,8 +1,9 @@
 # Scaling
 
 > **Implemented: Phase 8 (cross-instance collaboration over Redis Pub/Sub),
-> Phase 12 (two instances behind Nginx in Docker).** Deploying them to AWS is
-> Phase 14.
+> Phase 12 (instances behind Nginx in Docker), Phase 14 (replicas scaled with
+> `--scale backend=N`, discovered by Nginx through DNS).** Deploying to AWS is
+> planned in [aws.md](aws.md) and has not been carried out.
 
 ## Why the design scales at all
 

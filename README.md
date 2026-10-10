@@ -1,352 +1,508 @@
 # Real-Time Collaborative Code Editor
 
-A multi-user code editor where several people type in the same file at the same
-time and every keystroke converges without a lock, a merge dialog, or a lost
-edit — VS Code Live Share's editing model with Google Docs' sharing model.
+Several people edit the same file at the same time, in a VS Code-style editor in
+the browser, and every keystroke converges, with no locks, no merge dialogs and
+no lost edits. Sharing works with owner, editor and viewer roles, and there is
+a revision history with restore.
 
-The interesting part is not the editor UI. It is the correctness problem
-underneath it: concurrent edits are merged with a **CRDT** (Yjs) instead of a
-server-side lock, edits are fanned out **across backend instances** with Redis
-Pub/Sub so the system scales horizontally, and document state is persisted as
-**binary Yjs snapshots** so a restored document keeps its merge history.
+The interesting part is the correctness problem underneath the UI:
 
-> **Status: Phase 14 of 15 (HTTPS + horizontal scaling) complete, except the AWS deployment itself.** Accounts, documents,
-> sharing with OWNER / EDITOR / VIEWER roles, the Monaco editor,
-> ticket-authenticated WebSockets, real-time CRDT editing, live presence and
-> revision history with restore work end to end, across **several backend
-> instances** linked by Redis Pub/Sub, with rate limiting, document size caps,
-> CSRF and WebSocket-origin checks. One command runs the whole system in Docker
-> over HTTPS: Nginx serving the app and load-balancing backend replicas that
-> scale with `--scale backend=N`. About 340 automated checks, from unit tests to
-> two real browsers and a scale-out/scale-in test, run in CI
-> ([docs/testing.md](docs/testing.md)), which also publishes the images. The app
-> is **not deployed publicly**: the AWS plan is written ([docs/aws.md](docs/aws.md))
-> but needs an account. See [Build phases](#build-phases).
+- concurrent edits are merged by a **CRDT** (Yjs), not by a server-side lock;
+- edits fan out **across backend instances** through Redis Pub/Sub, so the
+  system scales horizontally and any instance can serve any document;
+- documents are stored as **binary CRDT state** in PostgreSQL, so a reload or a
+  restore never breaks the merge history.
+
+> **Status:** all 15 build phases are done, except that the app is **not deployed
+> publicly**. There was no AWS account; the deployment plan is written in
+> [docs/aws.md](docs/aws.md), and the production layout was rehearsed locally.
+> Everything else runs and is tested: about 355 automated checks run in CI,
+> from unit tests to two real browsers and a scale-out/scale-in test.
+
+**Contents:**
+[Demo](#demo) ·
+[Features](#features) ·
+[Architecture](#architecture) ·
+[Tech stack](#tech-stack) ·
+[Database](#database-schema) ·
+[Authentication](#authentication-flow) ·
+[WebSockets](#websocket-architecture) ·
+[CRDT](#yjs-and-the-crdt) ·
+[Redis](#redis-pubsub) ·
+[Persistence](#persistence-strategy) ·
+[Scaling](#horizontal-scaling) ·
+[Setup](#local-setup) ·
+[Environment](#environment-variables) ·
+[Docker](#docker) ·
+[Testing](#testing) ·
+[Deployment](#deployment) ·
+[Security](#security) ·
+[Limitations](#known-limitations) ·
+[Future](#future-improvements) ·
+[Docs](#documentation)
+
+## Demo
+
+![Two browsers editing one document, each served by a different backend instance](docs/images/demo.gif)
+
+Two users in two browsers, connected to **two different backend instances**
+(`backend-1` and `backend-2`, as the logs show), typing into one document.
+Each sees the other's text and named cursor as they type. Recorded with
+`playwright-core` against the running Docker stack.
+
+## Features
+
+- **Real-time collaborative editing** in Monaco (the editor inside VS Code),
+  with 8 languages and syntax highlighting.
+- **Conflict-free merging** with Yjs. Offline edits merge when the connection
+  returns; nothing is overwritten.
+- **Presence:** who is here, coloured named cursors and selections, across all
+  instances.
+- **Sharing** with OWNER / EDITOR / VIEWER roles, enforced on the server for every
+  request and every WebSocket message. Revoking access applies to open
+  connections immediately.
+- **Revision history:** automatic and manual versions, a read-only preview, and
+  restore that adds a new version instead of rewriting history.
+- **Save status** (`Saved`, `Saving…`, `Save failed`, `Offline`) and a
+  connection indicator. Both are honest: "Saved" means PostgreSQL confirmed this
+  exact state.
+- **Dashboard** with search, a language filter and pagination; the language is
+  inferred from the file name.
+- **Production-shaped operations:** HTTPS through Nginx, N backend replicas,
+  health checks, graceful shutdown, rate limits, a document size cap and
+  structured logs.
 
 ## Architecture
 
-```
-                    ┌──────────────────────────────────┐
-   Browser ────────▶│  Nginx                           │
-   React + Monaco   │  static assets · /api · /ws       │
-                    └───────────────┬──────────────────┘
-                                    │
-                    ┌───────────────┴──────────────────┐
-                    │                                  │
-            ┌───────▼────────┐               ┌─────────▼──────┐
-            │ Backend #1     │               │ Backend #2     │
-            │ Express + ws   │               │ Express + ws   │
-            │ Y.Doc in RAM   │               │ Y.Doc in RAM   │
-            └───┬────────┬───┘               └───┬────────┬───┘
-                │        │                       │        │
-                │        └───────────┬───────────┘        │
-                │                    │                    │
-                │          ┌─────────▼─────────┐          │
-                │          │ Redis Pub/Sub     │          │
-                │          │ transport only —  │          │
-                │          │ never durable     │          │
-                │          └───────────────────┘          │
-                │                                         │
-                └──────────────┬──────────────────────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │ PostgreSQL          │
-                    │ users · documents   │
-                    │ members · revisions │
-                    │ (Yjs snapshots)     │
-                    └─────────────────────┘
+```mermaid
+flowchart LR
+  subgraph Browser
+    M["Monaco editor"] --- Y["Y.Doc + Awareness"]
+  end
+  Y -- "HTTPS: REST /api" --> N["Nginx<br>TLS · static files · CSP<br>least_conn"]
+  Y -- "WSS: /ws?ticket=…" --> N
+  N --> B1["backend-1<br>Express + ws<br>Y.Doc per open document"]
+  N --> B2["backend-2"]
+  N -. "--scale backend=N" .-> B3["backend-N"]
+  B1 <-- "Pub/Sub channel per document" --> R[("Redis<br>Pub/Sub · tickets · sessions<br>rate-limit counters")]
+  B2 <--> R
+  B1 -- "merge-on-save<br>SELECT … FOR UPDATE" --> P[("PostgreSQL<br>users · documents<br>members · revisions")]
+  B2 --> P
 ```
 
-Two rules explain most of the design:
+Five ideas explain the design:
 
-- **Redis is a message bus, never a database.** If Redis is flushed, no document
-  content is lost — durable state lives in PostgreSQL.
-- **PostgreSQL stores CRDT state, not text.** A revision is
-  `Y.encodeStateAsUpdate()` output in a `BYTEA` column. Storing rendered text
-  would throw away the tombstones and client IDs that make a later merge
-  converge correctly.
+1. **CRDT, not locks.** Edits commute: applied in any order they give the
+   same result. So no server has to order them, and several servers can run at
+   once.
+2. **Each instance keeps its own Y.Doc** per open document. It serves late
+   joiners, is where authorisation is enforced, and is what gets saved.
+3. **Redis is a message bus, never a database.** If Redis loses messages or is
+   flushed, no content is lost: state-vector handshakes recover missed updates,
+   and durable state is in PostgreSQL.
+4. **Store CRDT state, never text.** Text drops the identity of every character,
+   which breaks merging and restoring.
+5. **Never trust the browser.** Every role check, message shape and identity
+   claim is checked on the server, and every input is bounded.
 
-Longer write-ups: [docs/architecture.md](docs/architecture.md),
-[docs/database.md](docs/database.md), and the full brief in
-[docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md).
+More: [docs/architecture.md](docs/architecture.md).
 
 ## Tech stack
 
-| Layer    | Choices                                                                          |
-| -------- | -------------------------------------------------------------------------------- |
-| Frontend | React 19, JavaScript (ESM), Vite, Monaco Editor, Yjs, React Router, Tailwind CSS |
-| Backend  | Node.js, JavaScript (ESM), Express 5, `ws`, Prisma, Zod, pino, JWT               |
-| Data     | PostgreSQL 17 (durable), Redis 7 (Pub/Sub, tickets, rate limits)                 |
-| Shared   | `@collab/shared` — roles, API envelopes and their runtime guards                 |
-| Ops      | Docker Compose, Nginx (HTTPS), GitHub Actions + GHCR; AWS runbook (not deployed) |
+| Layer    | Choices                                                                                  |
+| -------- | ---------------------------------------------------------------------------------------- |
+| Frontend | React 19, Vite, Monaco Editor, Yjs + y-monaco, React Router, Tailwind CSS                |
+| Backend  | Node.js 24, Express 5, `ws`, Prisma, Zod, pino, JWT, bcrypt                              |
+| Data     | PostgreSQL 17 (durable state), Redis 7 (Pub/Sub, tickets, sessions, rate limits)         |
+| Shared   | `@collab/shared`: roles, permission matrix, message types, error codes and their guards  |
+| Ops      | Docker Compose, Nginx (HTTPS, load balancing), GitHub Actions, GitHub Container Registry |
+| Tests    | Vitest, supertest, playwright-core                                                       |
 
-The whole repository is plain JavaScript with ES modules — no TypeScript, no
-build step for `shared/` or `backend/`. Node runs the source directly; only the
-frontend is bundled, by Vite.
+The repository is plain JavaScript (ES modules) in an npm-workspaces monorepo:
+`shared/`, `backend/`, `frontend/`. There is no TypeScript. Zod validates every
+input at the trust boundary, `shared/` provides runtime guards, and ESLint parses
+every file in CI.
 
-`shared/` exists so a role string or an error code cannot drift between client
-and server. Without a compiler to catch drift at build time, it ships **runtime
-guards** (`isRole`, `isApiErrorCode`, `isApiErrorResponse`, `isDependencyState`)
-and both sides call them at the trust boundary. Those guards are covered by 35
-tests, because they are now the only thing enforcing the contract.
+## Database schema
 
-## Validation strategy
-
-There is no `tsc --noEmit` gate, so correctness is enforced at runtime and in
-tests instead:
-
-| Boundary                                 | Enforced by                                                  |
-| ---------------------------------------- | ------------------------------------------------------------ |
-| Environment variables                    | Zod schema, parsed at startup — process exits on a bad value |
-| Inbound HTTP request bodies              | Zod schemas per route (from Phase 2)                         |
-| Roles and error codes                    | `@collab/shared` guards, called at every boundary            |
-| Error envelopes on the wire              | `isApiErrorResponse` before the client trusts a body         |
-| Undefined variables, bad imports, syntax | ESLint, which parses every file in CI                        |
-
-`AppError` validates its own `code` against the shared list and throws a
-`TypeError` on an unknown one, because a typo there would silently produce an
-envelope the client rejects.
-
-## Run the whole stack in Docker
-
-The production images, two backend instances behind Nginx, PostgreSQL, Redis
-and a migration job, on one command:
-
-```bash
-cp .env.example .env
-# Production mode refuses the placeholder secrets. Set two different values:
-#   JWT_SECRET=<openssl rand -hex 32>
-#   JWT_REFRESH_SECRET=<openssl rand -hex 32>
-npm install            # only needed for the smoke test
-npm run stack:up       # build, start, wait until every container is healthy
-npm run stack:smoke    # 20 checks through Nginx, including cross-instance editing
+```mermaid
+erDiagram
+  users ||--o{ documents : owns
+  users ||--o{ document_members : "is member"
+  documents ||--o{ document_members : has
+  documents ||--o{ document_revisions : has
+  users |o--o{ document_revisions : created
+  users {
+    uuid id PK
+    varchar email UK
+    text password_hash
+  }
+  documents {
+    uuid id PK
+    uuid owner_id FK
+    varchar name
+    varchar language
+    bytea yjs_state "current CRDT state"
+    timestamptz deleted_at "soft delete"
+  }
+  document_members {
+    uuid document_id PK
+    uuid user_id PK
+    enum role "OWNER | EDITOR | VIEWER"
+  }
+  document_revisions {
+    uuid id PK
+    uuid document_id FK
+    int revision_number "unique per document"
+    enum kind "AUTO | MANUAL | RESTORE"
+    bytea snapshot "binary Yjs state"
+  }
 ```
 
-Open <https://localhost:8443> in two browsers (or one normal and one private
-window), sign up as two users, share a document and type in both: Nginx's
-`least_conn` balancing puts the two sockets on different backend instances, and
-`npm run stack:logs` shows which instance served which user. Stop one instance
-with `docker stop collab-editor-backend-1` and keep typing: its users reconnect to the
-other instance. Details, failure tests and troubleshooting:
-[docs/deployment.md](docs/deployment.md).
+- Membership is the source of truth for access: the owner also has an `OWNER`
+  row, created in the same transaction as the document.
+- `(document_id, user_id)` is the primary key, so a user has exactly one role
+  per document, even when two invites race.
+- Deleting is soft (`deleted_at`): history survives, and every read filters it.
 
-## Requirements
+More: [docs/database.md](docs/database.md).
 
-- Node.js **≥ 20.19** (developed on 24.x)
-- Docker Desktop (for PostgreSQL and Redis)
+## Authentication flow
 
-## Getting started
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant A as /api/auth
+  participant R as Redis
+  B->>A: POST /register or /login (email, password)
+  A->>A: bcrypt check (cost 12), also for unknown emails
+  A->>R: store refresh session (jti, 7 days)
+  A-->>B: access token (JWT, 15 min, kept in memory)<br>+ HttpOnly refresh cookie (Path=/api/auth)
+  Note over B: API calls send the access token in the Authorization header
+  B->>A: POST /refresh (cookie), when the access token is about to expire
+  A->>R: GETDEL old session (single use) then store new one
+  A-->>B: new access token + rotated cookie
+```
+
+- The access token lives only in memory, so XSS cannot read it from storage.
+  The refresh token is in an `HttpOnly`, `SameSite`, `Secure` (in production)
+  cookie scoped to `/api/auth`.
+- Rotation means a stolen refresh token works at most once. Logout deletes the
+  session, so a copied cookie is useless.
+
+More: [docs/authentication.md](docs/authentication.md).
+
+## WebSocket architecture
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant API as REST (any instance)
+  participant R as Redis
+  participant WS as WebSocket (any instance)
+  C->>API: POST /api/documents/:id/ws-ticket (Bearer token)
+  API->>API: check membership
+  API->>R: SET ticket {userId, documentId} EX 30
+  API-->>C: { ticket }
+  C->>WS: GET /ws?ticket=… (upgrade)
+  WS->>WS: path, Origin and per-IP limit checks
+  WS->>R: GETDEL ticket (single use)
+  WS->>WS: re-check membership, join the document's session
+  WS-->>C: joined { userId, role }
+  C->>WS: sync-step1 { stateVector }
+  WS-->>C: sync-step2 { update } (what the client lacks)
+  WS-->>C: sync-step1 { stateVector }
+  C->>WS: sync-step2 { update } (what the server lacks)
+  Note over C,WS: then live "update" and "awareness" messages both ways
+```
+
+- **Why tickets.** A JWT in a WebSocket URL would end up in logs and browser
+  history. A ticket is random, bound to one user and one document, valid for
+  30 s and usable once (an atomic `GETDEL`, proven under a race by an
+  integration test).
+- **One socket = one document,** fixed by the ticket. Messages carry no document
+  id, so a payload can't be redirected to another document.
+- **Every message** is validated with Zod and checked against the role
+  (`can(role, 'document:edit')`), and messages are rate limited per socket.
+  Close codes tell the client whether to retry (`4008`, `4009`, `4029`) or stop
+  (`4001`, `4003`, `4004`).
+
+More: [docs/collaboration.md](docs/collaboration.md).
+
+## Yjs and the CRDT
+
+A **CRDT** (Conflict-free Replicated Data Type) is a data structure whose
+replicas can be edited independently and always converge when they exchange
+updates, in any order. Yjs gives each inserted character a unique identity
+(client id + clock) and keeps deletions as tombstones. Two people inserting at
+the same position therefore get a deterministic order, not a conflict.
+
+- A **state vector** (`clientId → clock`) says what a replica has seen;
+  `Y.encodeStateAsUpdate(doc, theirStateVector)` produces exactly what they are
+  missing. The same handshake covers first load, late joiners and reconnection.
+- **Decision — revision snapshot format:** revisions (and the live state) are
+  stored as `Y.encodeStateAsUpdate(doc)` bytes, not as text. Re-creating a doc
+  from text would give every character a new identity, and a client that still
+  holds the old state would merge both copies and duplicate the document.
+- **Restore** is not "apply the old snapshot". In a CRDT that is a no-op, since
+  the old operations are already part of the history. Instead the server
+  computes the text difference to the old version and applies it as one
+  ordinary edit, which reaches everyone live, and saves a new `RESTORE`
+  revision. History is never rewritten.
+
+More: [docs/collaboration.md](docs/collaboration.md#revision-history-and-restore-25).
+
+## Redis Pub/Sub
+
+Every instance subscribes to `document:<id>` for the documents it has open, and
+publishes each local update there. Instances that receive it apply the update,
+which is idempotent in a CRDT, and forward it to their own sockets.
+
+- **Decision — wire format:** a JSON envelope with the binary Yjs update in
+  base64: `{ "v": 1, "from": "<instance>", "to": null, "type": "update", "data": "AQLq…" }`.
+  It is the same shape as on the WebSocket, readable with `redis-cli MONITOR`,
+  and versioned. Base64 costs about 33% in size, which is fine at this scale; a
+  binary encoding is the documented upgrade path.
+- **Missed messages** (Pub/Sub has no delivery guarantee): whenever an instance
+  (re)subscribes it sends a `hello` with its state vector, and peers answer with
+  what it lacks. Saves also merge into PostgreSQL under a row lock, so diverged
+  copies combine instead of overwriting each other.
+- **When Redis is down:** editing and saving continue. Users on the same
+  instance still see each other; across instances the editor shows "Degraded".
+  New logins and connections fail, and `/readyz` returns 503. When Redis
+  returns, the instances reconcile without clients reconnecting.
+
+More: [docs/scaling.md](docs/scaling.md).
+
+## Persistence strategy
+
+| What                     | When                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| Live state (`yjs_state`) | after 2 s without edits, at least every 10 s while typing, when the last user leaves, on shutdown |
+| `AUTO` revision          | on a save, if the text changed and 5 min have passed since the last revision                      |
+| `MANUAL` revision        | "Save version" (returns the latest revision if nothing changed)                                   |
+| `RESTORE` revision       | every restore                                                                                     |
+
+- **Merge-on-save:** each save runs `SELECT … FOR UPDATE` on the document row,
+  merges the stored state with the in-memory one and writes the union. Two
+  instances saving at the same moment cannot lose each other's edits (proven by
+  an integration test with partitioned instances).
+- **Honest save status:** the client compares state vectors. "Saved" appears
+  only when PostgreSQL holds everything this client has typed.
+- **Graceful shutdown** flushes every open document; SIGTERM to exit takes about
+  2 s.
+
+## Horizontal scaling
+
+The backend is one Compose service with N replicas:
 
 ```bash
-git clone <repository-url>
-cd project-1
+docker compose --profile app up -d --scale backend=3
+```
+
+Nginx's upstream is the single line `server backend:4000 resolve`. Docker's
+DNS returns every replica's address and Nginx re-resolves every 5 s, so a new
+replica gets traffic with no configuration change. There are no sticky
+sessions, because any instance can serve any document. `npm run stack:scale`
+proves it with nine live clients:
+
+- they spread 3/3/3 over three instances, and every edit reaches all nine;
+- scaling back to two shuts the removed replica down gracefully, its users
+  reconnect elsewhere, and nobody loses an edit.
+
+More: [docs/scaling.md](docs/scaling.md) and
+[docs/deployment.md](docs/deployment.md#scaling-phase-14).
+
+## Local setup
+
+Requirements: **Node.js ≥ 20.19** (developed on 24) and **Docker Desktop**.
+
+```bash
+git clone https://github.com/Hargun1/project1.git
+cd project1
 npm install
 cp .env.example .env
+npm run infra:up        # PostgreSQL + Redis in Docker
+npm run db:migrate      # apply the schema
+npm run dev:backend     # terminal 1: Express on :4000 with --watch
+npm run dev:frontend    # terminal 2: Vite on :5173 (proxies /api and /ws)
 ```
 
-Start the infrastructure containers, then apply the schema:
+Open <http://localhost:5173>, create two accounts (one in a private window),
+share a document and type in both.
+
+On Windows, if `infra:up` says it cannot connect to the Docker API, start Docker
+Desktop and wait until it is running.
+
+## Environment variables
+
+There is one `.env` at the repository root, read by Docker Compose, the backend
+(dotenv) and Vite (`envDir`). The backend validates all of it with Zod at
+startup and exits with a readable list of problems. In production it refuses
+placeholder secrets. [`.env.example`](.env.example) documents every variable.
+
+| Variable                                                     | Default (dev)           | Purpose                                                          |
+| ------------------------------------------------------------ | ----------------------- | ---------------------------------------------------------------- |
+| `DATABASE_URL`, `REDIS_URL`                                  | local containers        | where the data lives                                             |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET`                           | placeholders            | ≥ 32 chars, different from each other; real values in production |
+| `CLIENT_URL`                                                 | `http://localhost:5173` | the browser origin (CORS, CSRF and WebSocket Origin checks)      |
+| `WS_TICKET_TTL_SECONDS`                                      | `30`                    | WebSocket ticket lifetime                                        |
+| `DOC_SNAPSHOT_DEBOUNCE_MS`                                   | `2000`                  | idle time before saving                                          |
+| `DOC_REVISION_INTERVAL_MS`                                   | `300000`                | minimum spacing of automatic revisions                           |
+| `MAX_DOCUMENT_SIZE_BYTES`                                    | `1048576`               | document size cap                                                |
+| `RATE_LIMIT_*`, `WS_MESSAGES_PER_SECOND`, `WS_MESSAGE_BURST` | see `.env.example`      | rate limits                                                      |
+| `TRUST_PROXY_HOPS`                                           | `1`                     | how many proxies' `X-Forwarded-For` entries to trust             |
+| `STACK_*`, `BACKEND_REPLICAS`                                | `8443`, `8080`, `2`     | Docker stack ports and replica count                             |
+
+## Docker
 
 ```bash
-npm run infra:up
+# .env needs real JWT secrets: the stack runs in production mode
+npm run stack:up        # build images; start PostgreSQL, Redis, migrations,
+                        # 2 backend replicas and Nginx; wait until healthy
 ```
 
-```bash
-npm run db:migrate
-```
+Open <https://localhost:8443>. The certificate is self-signed unless you put one
+in `nginx/certs/` (e.g. from `mkcert`); <http://localhost:8080> redirects to it.
 
-`infra:up` needs Docker Desktop already running with its Linux engine
-available. On Windows, if it reports
-`failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`,
-open Docker Desktop and wait for the whale icon to stop animating, then retry.
+- **Images:** multi-stage builds. The backend runtime image has production
+  dependencies only and runs as a non-root user; the web image is Nginx plus the
+  built frontend.
+- **Start order:** health-based. PostgreSQL and Redis must be healthy, the
+  migration job must exit 0, and the backends must be healthy before Nginx
+  starts.
+- **Health checks:** `/healthz` is liveness (touches nothing) and drives the
+  container health check. `/readyz` is readiness (PostgreSQL and Redis, plus
+  `draining` during shutdown) and is meant for load balancers.
 
-Run the backend and the frontend in two terminals:
+Details: [docs/deployment.md](docs/deployment.md).
 
-```bash
-npm run dev:backend
-```
+## Testing
 
-```bash
-npm run dev:frontend
-```
+| Layer                                             | Command                    | Checks | In CI |
+| ------------------------------------------------- | -------------------------- | ------ | ----- |
+| Unit tests (shared / backend / frontend)          | `npm test`                 | 277    | ✅    |
+| Integration: real PostgreSQL + Redis, 2 instances | `npm run test:integration` | 32     | ✅    |
+| Smoke test of the Docker stack over HTTPS         | `npm run stack:smoke`      | 20     | ✅    |
+| Two real browsers through the UI                  | `npm run stack:e2e`        | 17     | ✅    |
+| Scale out to 3 replicas and back                  | `npm run stack:scale`      | 9      | ✅    |
+| Resilience: stop instances and Redis              | `npm run stack:resilience` | 21     | local |
 
-Open <http://localhost:5173>. The status page performs live `GET /healthz` and
-`GET /readyz` calls through the typed API layer, so a green PostgreSQL card is
-real evidence that browser → Vite proxy → Express → Prisma → Postgres works end
-to end. Without the containers running, the page renders correctly and honestly
-reports PostgreSQL as `down` — which is itself the readiness path working.
+- **Coverage:** unit + integration together reach 94.9% of backend statements.
+  CI fails below 90/85/90/90 (statements, branches, functions, lines).
+- **Mutation checks:** important tests were proven by breaking the code on
+  purpose. Removing the row lock, the soft-delete filter or `GETDEL`, or making
+  the ticket check non-atomic, each fails a test.
+- **Bugs the tests found:** a 500 on simultaneous registrations, a non-atomic
+  ticket fallback, a 60 s failover delay in Nginx, a shutdown that could skip
+  saving, and a login timing leak. All are fixed, with regression tests.
 
-There is one `.env` at the repository root. Docker Compose reads it directly,
-the backend loads it with dotenv, and Vite reads it via `envDir` — so a port or
-password is defined in exactly one place. The backend validates every variable
-with Zod at startup and exits with a readable list of problems rather than
-failing later with `undefined`.
+Details: [docs/testing.md](docs/testing.md).
 
-The security limits are variables too, with safe defaults: `RATE_LIMIT_*`,
-`WS_MESSAGES_PER_SECOND`, `WS_MESSAGE_BURST`, `MAX_DOCUMENT_SIZE_BYTES` and
-`TRUST_PROXY_HOPS` (how many reverse proxies' `X-Forwarded-For` entries to
-trust). `.env.example` lists them all with comments.
+## Deployment
 
-## Scripts
+- **CI** (`.github/workflows/ci.yml`): lint, format, unit tests and build. Then,
+  in parallel, integration tests against PostgreSQL and Redis service
+  containers with coverage, and the Docker images with smoke, browser and
+  scaling tests. On `main`, when everything has passed, CI **publishes the
+  images** to GitHub Container Registry, tagged with the commit SHA.
+- **Production layout:** `docker-compose.prod.yml` runs the published images on
+  ports 80/443 with Let's Encrypt, with PostgreSQL and Redis not exposed. It was
+  rehearsed locally.
+- **AWS:** not deployed. [docs/aws.md](docs/aws.md) is the step-by-step plan:
+  one EC2 server first, then an Application Load Balancer with two instances,
+  RDS and ElastiCache.
 
-| Command                    | What it does                                          |
-| -------------------------- | ----------------------------------------------------- |
-| `npm run dev:backend`      | Express with `node --watch` (no transpiler)           |
-| `npm run dev:frontend`     | Vite dev server on :5173, proxying the API to :4000   |
-| `npm run build`            | Bundles the frontend (nothing else needs building)    |
-| `npm run lint`             | ESLint 9 flat config over the whole monorepo          |
-| `npm test`                 | Unit tests (Vitest) in every workspace                |
-| `npm run test:integration` | Backend against real PostgreSQL + Redis (`infra:up`)  |
-| `npm run test:coverage`    | Unit + integration with coverage thresholds           |
-| `npm run db:migrate`       | Creates/applies a development migration               |
-| `npm run db:studio`        | Prisma Studio                                         |
-| `npm run infra:up`         | `docker compose up -d` (PostgreSQL + Redis)           |
-| `npm run infra:down`       | Stops the containers, keeps the volume                |
-| `npm run infra:reset`      | Stops the containers **and deletes the data volume**  |
-| `npm run stack:up`         | Whole system in Docker, https://localhost:8443        |
-| `npm run stack:scale`      | Scales to 3 backend replicas and back, 9 live clients |
-| `npm run stack:smoke`      | Smoke test of the running stack through Nginx         |
-| `npm run stack:e2e`        | Two headless Chrome users through the real UI         |
-| `npm run stack:resilience` | Stops containers and Redis; checks recovery           |
-| `npm run stack:logs`       | Follows every container's logs                        |
-| `npm run stack:down`       | Stops the stack, keeps the data volume                |
+## Security
 
-## When Redis is unavailable
+- **Passwords:** bcrypt (cost 12, 72-byte limit enforced). A dummy comparison for
+  unknown emails stops timing-based account discovery.
+- **Tokens:** short-lived access tokens kept in memory; rotating, single-use
+  refresh sessions in an `HttpOnly` cookie.
+- **WebSockets:** single-use tickets, Origin check on the handshake, role check
+  on every message, per-socket rate limit and frame size cap.
+- **Authorisation:** one permission matrix shared by server and UI, enforced on
+  the server. Removing a member closes their open sockets on every instance.
+- **Abuse limits:** rate limits shared through Redis (per IP, per email, per
+  user, per socket); document size cap; coarse per-IP limits in Nginx.
+- **CSRF:** header-based auth everywhere except `/api/auth`, which is protected
+  by `SameSite` plus an Origin check.
+- **Transport and browser:** HTTPS with TLS 1.2/1.3, HSTS on real domains, and a
+  strict Content-Security-Policy (no inline scripts, zero violations in a real
+  browser), plus `nosniff` and `frame-ancestors 'none'`.
+- **Hygiene:** Zod validation at every boundary; secrets never committed and kept
+  out of images; logs redact tokens, cookies and passwords; the API sends
+  `Cache-Control: no-store`.
 
-Redis carries live edits between backend instances; it never stores documents.
-If it goes down mid-session (verified by stopping the container):
+Details: [docs/security.md](docs/security.md).
 
-- Editing continues. Users on the same instance still see each other live;
-  users on different instances stop seeing each other, and the editor shows
-  **Degraded: other servers out of sync**.
-- Saving continues. Each save merges into PostgreSQL under a row lock, so the
-  instances' diverged copies are combined, never overwritten.
-- New connections and logins fail (tickets and refresh sessions live in Redis)
-  and `/readyz` reports `503`, so a load balancer stops routing new traffic.
-- When Redis returns, the instances re-run a state-vector handshake and every
-  edit made during the outage appears everywhere, without clients reconnecting.
+## Known limitations
 
-Full behaviour table: [docs/scaling.md](docs/scaling.md#when-redis-is-unavailable-43).
+- **Not deployed publicly:** no AWS account and no domain, so there is no
+  publicly trusted certificate. Browsers warn about the local self-signed
+  certificate.
+- **Single infrastructure nodes:** PostgreSQL and Redis are single containers
+  locally. High availability is part of the AWS plan (RDS Multi-AZ, ElastiCache).
+- **In-memory documents:** each instance holds the documents its users have
+  open. Memory grows with open documents (the size cap is 1 MiB each).
+- **Crash window:** if an instance is killed hard (not stopped), edits from up to
+  ~10 s ago exist only in clients. Clients that are still connected, or that
+  reconnect, re-send them; a client that never returns loses them.
+- **During a Redis outage:** no new logins or connections, cross-instance sync
+  is paused (and merged afterwards), and rate limits are not enforced (they
+  fail open).
+- **Failover per request:** right after an instance stops, one request can fail
+  once. Clients retry, so a user sees one reconnect.
+- **Scope:** one file per document, 8 languages, no email verification or
+  password reset, no metrics dashboard. React components are tested only
+  through the browser test.
 
-## Health endpoints
+## Future improvements
 
-| Endpoint   | Meaning                                                                    |
-| ---------- | -------------------------------------------------------------------------- |
-| `/healthz` | Liveness. Touches no dependency; answers `200` whenever the process is up. |
-| `/readyz`  | Readiness. Round-trips PostgreSQL; answers `503 degraded` when it is down. |
+- Carry out the AWS deployment ([docs/aws.md](docs/aws.md)) with a domain and
+  Let's Encrypt.
+- Metrics and alerting: open sockets, open documents, save latency, readiness
+  (CloudWatch or Prometheus).
+- A per-user undo manager (Yjs `UndoManager`), so undo only reverts your own
+  edits.
+- Offline persistence in the browser (IndexedDB), for edits made with no
+  connection at all.
+- Comments on lines, a project/file tree, and email verification with password
+  reset.
+- A binary wire format on Redis if message volume ever makes base64 matter.
+- Explicitly out of scope until the core is proven: code execution, video or
+  voice, AI features, Kubernetes, microservices.
 
-The split matters for orchestration: a liveness probe that queried the database
-would make a load balancer kill and restart healthy application containers
-during a database blip.
+## Definition of done (spec §49)
 
-## Repository layout
+| Area           | Requirement                                                                                         | Status | Evidence                                                                  |
+| -------------- | --------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------- |
+| Authentication | register/login/logout; hashed passwords; expiring access tokens; revocable refresh                  | ✅     | `auth.int.test.js`, `token.test.js`                                       |
+| Editor         | Monaco works; documents persist; multiple languages                                                 | ✅     | `browser-e2e.mjs`, `collaboration.int.test.js`                            |
+| Collaboration  | simultaneous editing, real time, convergence, reconnection without loss, presence                   | ✅     | `collaboration.int.test.js`, `concurrency.int.test.js`, `browser-e2e.mjs` |
+| Scaling        | 2+ instances; cross-instance collaboration via Redis; health checks behind the LB                   | ✅     | `scaling-stack.mjs`, `smoke-stack.mjs`, `cluster.test.js`                 |
+| Persistence    | survives restart; binary snapshots; restore adds a revision                                         | ✅     | `collaboration.int.test.js`, `resilience-stack.mjs`                       |
+| Security       | no unauthorised access; viewer can't edit; ticket auth; rate limits; size cap; no committed secrets | ✅     | `documents.int.test.js`, `ws-security.test.js`, `security.test.js`        |
+| Deployment     | runs in Docker; CI passes; HTTPS; WebSockets through the proxy                                      | ✅     | `docker-compose.yml`, `ci.yml`, `smoke-stack.mjs`                         |
+| Deployment     | **production deployment works**                                                                     | ❌     | not deployed (no AWS account); plan in `docs/aws.md`                      |
 
-```
-shared/                 Contracts shared across the trust boundary
-  src/roles.js          ROLES + isRole guard (OWNER | EDITOR | VIEWER)
-  src/permissions.js    the permission matrix + can(role, action), used by both sides
-  src/api.js            Error codes, envelope guards
-  src/ws-messages.js    WebSocket message vocabulary, close/error codes
-  src/encoding.js       base64 <-> Uint8Array for Yjs payloads in JSON
-  src/health.js         Dependency states + documented health/readiness shapes
-  tests/                Guards and codec tests
+The spec's `tsc --noEmit` requirement does not apply: the project was converted
+to plain JavaScript, and ESLint plus Zod plus tests take its place.
 
-backend/
-  prisma/schema.prisma  users · documents · document_members · document_revisions
-  src/config/           Zod-validated environment, constants
-  src/middleware/       request-id, JWT authentication, central error handler
-  src/routes/ controllers/ services/ repositories/
-                        REST layers: auth, documents, health
-  src/services/collaboration.service.js, presence.service.js
-                        Hub: one Y.Doc + Awareness per open document, synced
-                        across instances over Redis; merge-on-save; debounced
-                        saves; validated, identity-checked presence
-  src/websocket/        ws server, tickets, connection lifecycle, Zod schemas
-  src/auth/             bcrypt, JWT, rotating refresh sessions in Redis
-  src/database/ redis/  Prisma client, ioredis client, Pub/Sub bus + envelope schema
-  src/utils/            pino logger (with redaction), AppError
-  src/app.js            createApp() — no listener, so tests can import it
-  src/server.js         listen + WebSocket attach + graceful shutdown/flush
-  tests/                Vitest + supertest; collaboration and cluster tests drive
-                        real WebSocket servers (two instances over an in-memory
-                        bus that can simulate a Redis outage) with real Yjs clients
-  tests/integration/    The same against real PostgreSQL + Redis: auth, documents,
-                        collaboration across instances, concurrency
+## Documentation
 
-frontend/
-  src/auth/             AuthProvider (in-memory access token, silent refresh)
-  src/services/         fetch layer, ApiError, REST clients
-  src/websocket/        Socket transport: tickets, keepalive, backoff
-  src/collaboration/    Yjs sync protocol, save status, escaped cursor CSS
-  src/hooks/            usePresence (who is here, without per-cursor renders)
-  tests/                Vitest: WebSocket transport, HTTP client, pure modules
-  src/pages/            Status, login, register, dashboard, editor, history
-  src/utils/            Language list, Monaco worker/bundling setup
-
-scripts/                Stack smoke, browser end-to-end and resilience tests
-docs/                   Architecture, database, testing, and per-phase deep dives
-```
-
-## Security posture
-
-Implemented in Phase 1:
-
-- Helmet security headers; `x-powered-by` disabled
-- CORS restricted to `CLIENT_URL` with credentials enabled
-- 100 kB JSON body limit, returning a typed `PAYLOAD_TOO_LARGE` error
-- Zod validation of environment variables at boot, refusing placeholder secrets
-  in production
-- Structured logging with `authorization`, `cookie`, `password`, `token`,
-  `refreshToken` and `ticket` **removed** from log output
-- A central error handler that returns a typed envelope and never leaks stack
-  traces or database errors in production
-
-Implemented in Phases 2–6: bcrypt password hashing; short-lived JWT access
-tokens with an atomically rotated `HttpOnly` refresh cookie; single-use
-WebSocket tickets; role re-checked on every socket connection, with edits from
-viewers refused on the server; Zod validation of every WebSocket message.
-Details and test references: [docs/security.md](docs/security.md).
-
-Implemented in Phase 10: one permission matrix shared by server and UI,
-member management (invite, change role, remove, leave), and live revocation of
-open connections across instances.
-
-Implemented in Phase 11: rate limits shared across instances through Redis
-(auth per IP and per email, API per user, WebSocket connections per IP,
-messages per socket), the document size cap, an Origin check for CSRF and for
-WebSocket upgrades, a fix for a login timing leak, bcrypt's 72-byte limit, and
-`Cache-Control: no-store` on the API. Details: [docs/security.md](docs/security.md).
-
-Implemented in Phase 12: a strict Content-Security-Policy and security headers on
-the page, served by Nginx (no inline scripts, no third-party origins), coarse
-per-IP flood limits in Nginx in front of the backend's precise ones, and a
-`draining` readiness state during graceful shutdown.
-
-Implemented in Phase 14: HTTPS in Nginx (TLS 1.2/1.3, HTTP→HTTPS redirect,
-HSTS for real host names but never for localhost, Let's Encrypt-ready), with
-`Secure` cookies now travelling over TLS.
-
-Not done: a public deployment. The AWS plan is in [docs/aws.md](docs/aws.md)
-and has not been carried out.
-
-## Build phases
-
-| #   | Phase                   | Status                                       |
-| --- | ----------------------- | -------------------------------------------- |
-| 1   | Foundation              | ✅ done                                      |
-| 2   | Authentication          | ✅ done                                      |
-| 3   | Documents               | ✅ done                                      |
-| 4   | Monaco editor           | ✅ done                                      |
-| 5   | WebSockets              | ✅ done                                      |
-| 6   | Yjs collaboration       | ✅ done                                      |
-| 7   | Presence + awareness    | ✅ done                                      |
-| 8   | Redis Pub/Sub scaling   | ✅ done                                      |
-| 9   | Persistence + revisions | ✅ done                                      |
-| 10  | Role-based access       | ✅ done                                      |
-| 11  | Security hardening      | ✅ done                                      |
-| 12  | Docker + Nginx          | ✅ done                                      |
-| 13  | Testing                 | ✅ done                                      |
-| 14  | AWS + scaling proof     | ✅ done locally (AWS: runbook, not deployed) |
-| 15  | Polish + documentation  | —                                            |
+| Document                                    | Covers                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| [architecture.md](docs/architecture.md)     | the problem, CRDT vs OT vs locks, update flow, request lifecycle         |
+| [authentication.md](docs/authentication.md) | tokens, rotation, cookies, WebSocket tickets                             |
+| [collaboration.md](docs/collaboration.md)   | sync protocol, persistence, revisions and restore, presence, wire format |
+| [database.md](docs/database.md)             | tables, constraints, migrations                                          |
+| [scaling.md](docs/scaling.md)               | multi-instance design, Redis failure behaviour                           |
+| [security.md](docs/security.md)             | every control, with the tests that prove it                              |
+| [deployment.md](docs/deployment.md)         | Docker, Nginx, HTTPS, scaling, CD, health, logs                          |
+| [testing.md](docs/testing.md)               | test layers, the spec checklist mapped to tests, mutation checks         |
+| [aws.md](docs/aws.md)                       | the AWS runbook (not deployed)                                           |
+| [PROJECT_SPEC.md](docs/PROJECT_SPEC.md)     | the original specification                                               |
 
 ## License
 

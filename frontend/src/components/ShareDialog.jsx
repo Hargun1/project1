@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ASSIGNABLE_ROLES, can } from '@collab/shared';
 import * as docService from '../services/document.service.js';
-
-const ROLE_LABEL = { OWNER: 'Owner', EDITOR: 'Editor', VIEWER: 'Viewer' };
+import { useToast } from '../toast/toast-context.js';
+import { ROLE_LABELS as ROLE_LABEL } from '../utils/roles.js';
 
 /**
  * "Share" dialog (§2.8–2.9): who has access, and — for the owner — invite,
@@ -28,6 +28,7 @@ export function ShareDialog({ documentId, myUserId, myRole, getAccessToken, onCl
   const [inviteRole, setInviteRole] = useState('EDITOR');
   const dialogRef = useRef(null);
   const canManage = can(myRole, 'members:manage');
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -71,7 +72,10 @@ export function ShareDialog({ documentId, myUserId, myRole, getAccessToken, onCl
     const ok = await run((token) =>
       docService.addMember(token, documentId, { email, role: inviteRole }),
     );
-    if (ok) setEmail('');
+    if (ok) {
+      toast.success(`Invited ${email.trim()} as ${ROLE_LABEL[inviteRole].toLowerCase()}`);
+      setEmail('');
+    }
   };
 
   const handleLeave = async () => {
@@ -83,7 +87,10 @@ export function ShareDialog({ documentId, myUserId, myRole, getAccessToken, onCl
       return;
     }
     const ok = await run((token) => docService.removeMember(token, documentId, myUserId));
-    if (ok) onLeft();
+    if (ok) {
+      toast.info('You left the document');
+      onLeft();
+    }
   };
 
   return (

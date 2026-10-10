@@ -159,6 +159,19 @@ try {
     );
   check("Alice's presence bar shows Bob", presence);
 
+  // ── Feedback: "Save version" confirms with a toast (Phase 15) ─────────────
+  await alice.page.getByRole('button', { name: 'Save version' }).click();
+  const toastShown = await alice.page
+    .getByRole('status')
+    .filter({ hasText: /Saved as revision \d+/ })
+    .first()
+    .waitFor({ timeout: 10_000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  check('"Save version" confirms with a toast', toastShown);
+
   // ── Reload: session from the refresh cookie, text from PostgreSQL ─────────
   await new Promise((resolve) => setTimeout(resolve, 2_500)); // past the save debounce
   await alice.page.reload();
@@ -167,6 +180,20 @@ try {
     'after a reload Alice is still signed in and the document is intact',
     (await waitForText(alice, 'const fromAlice = 1;')) &&
       (await waitForText(alice, 'const fromBob = 2;')),
+  );
+
+  // ── Phone-sized screen: nothing wider than the viewport (Phase 15) ────────
+  await bob.page.setViewportSize({ width: 390, height: 844 });
+  const overflows = async () =>
+    bob.page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  const editorOverflows = await overflows();
+  await bob.page.goto(`${BASE}/dashboard`);
+  await bob.page.getByRole('link', { name: docName }).first().waitFor({ timeout: 10_000 });
+  const dashboardOverflows = await overflows();
+  check(
+    'on a 390 px screen the editor and dashboard need no horizontal scrolling',
+    !editorOverflows && !dashboardOverflows,
+    `editor ${editorOverflows}, dashboard ${dashboardOverflows}`,
   );
 
   // ── Browser health ─────────────────────────────────────────────────────────

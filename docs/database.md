@@ -15,14 +15,14 @@ Schema: [`backend/prisma/schema.prisma`](../backend/prisma/schema.prisma).
 
 ### `users`
 
-| Column          | Type           | Notes                                     |
-| --------------- | -------------- | ----------------------------------------- |
-| `id`            | `uuid` PK      |                                           |
-| `name`          | `varchar(100)` |                                           |
-| `email`         | `varchar(255)` | `UNIQUE`                                  |
-| `password_hash` | `text`         | Argon2id/bcrypt digest — never a password |
-| `created_at`    | `timestamptz`  |                                           |
-| `updated_at`    | `timestamptz`  |                                           |
+| Column          | Type           | Notes                                      |
+| --------------- | -------------- | ------------------------------------------ |
+| `id`            | `uuid` PK      |                                            |
+| `name`          | `varchar(100)` |                                            |
+| `email`         | `varchar(255)` | `UNIQUE`                                   |
+| `password_hash` | `text`         | bcrypt digest (cost 12) — never a password |
+| `created_at`    | `timestamptz`  |                                            |
+| `updated_at`    | `timestamptz`  |                                            |
 
 The column is named `password_hash`, not `password`, on purpose: the name is the
 first line of documentation, and it makes a plaintext write look obviously wrong
@@ -166,8 +166,10 @@ against the running container: 4 tables, the `Role` enum, the composite primary 
 `document_members`, `UNIQUE (document_id, revision_number)`, `snapshot BYTEA`,
 `ON DELETE SET NULL` on `document_revisions.created_by`, and all 9 indexes.
 
-## What is not in the schema yet
+## What is deliberately not in the schema
 
-Refresh-token sessions, share links and audit rows arrive with the phases that
-need them (2 and 10). Adding them now would mean tables no code reads, which is
-indistinguishable from dead code.
+- **Refresh sessions and WebSocket tickets** live in Redis with a TTL, not in
+  tables: they are short-lived, must expire on their own, and are consumed
+  atomically with `GETDEL`.
+- **Share links and audit rows** were never needed by a feature, so they were
+  not built. A table no code reads is dead code.

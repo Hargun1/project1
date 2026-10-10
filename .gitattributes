@@ -6,6 +6,7 @@
 # Binary files are never converted.
 *.png binary
 *.jpg binary
+*.gif binary
 *.ico binary
 *.ttf binary
 *.woff binary

@@ -15,6 +15,8 @@ import { buildCursorCss } from '../collaboration/cursor-styles.js';
 import { groupByUser, usePresence } from '../hooks/usePresence.js';
 import { CollaboratorAvatars, CollaboratorList } from '../components/Collaborators.jsx';
 import { ShareDialog } from '../components/ShareDialog.jsx';
+import { useToast } from '../toast/toast-context.js';
+import { roleLabel } from '../utils/roles.js';
 
 /**
  * Collaborative editor (§9, §18, §30).
@@ -58,6 +60,7 @@ const CONNECTION_BADGE = {
 };
 
 export function EditorPage() {
+  const toast = useToast();
   const { documentId } = useParams();
   const { getAccessToken, user } = useAuth();
   const navigate = useNavigate();
@@ -88,7 +91,6 @@ export function EditorPage() {
   // Every UI decision uses the same permission matrix the server enforces.
   const isReadOnly = !can(role, 'document:edit');
   const [shareOpen, setShareOpen] = useState(false);
-  const [versionNotice, setVersionNotice] = useState(null);
   const [savingVersion, setSavingVersion] = useState(false);
 
   // ── Load document metadata ───────────────────────────────────────────
@@ -195,23 +197,14 @@ export function EditorPage() {
         await getAccessToken(),
         documentId,
       );
-      setVersionNotice(
-        created
-          ? `Saved as revision ${revision.revisionNumber}`
-          : `No changes since revision ${revision.revisionNumber}`,
-      );
+      if (created) toast.success(`Saved as revision ${revision.revisionNumber}`);
+      else toast.info(`No changes since revision ${revision.revisionNumber}`);
     } catch (err) {
-      setProtocolError({ code: err.code ?? 'ERROR', message: err.message });
+      toast.error(`Could not save a version: ${err.message}`);
     } finally {
       setSavingVersion(false);
     }
   };
-
-  useEffect(() => {
-    if (!versionNotice) return undefined;
-    const timer = setTimeout(() => setVersionNotice(null), 4000);
-    return () => clearTimeout(timer);
-  }, [versionNotice]);
 
   const handleLanguageChange = async (next) => {
     const previous = language;
@@ -220,20 +213,32 @@ export function EditorPage() {
       await docService.updateDocument(await getAccessToken(), documentId, { language: next });
     } catch (err) {
       setLanguage(previous);
-      setProtocolError({ code: err.code ?? 'ERROR', message: err.message });
+      toast.error(`Could not change the language: ${err.message}`);
     }
   };
 
   // ── Render ────────────────────────────────────────────────────────────
   if (loadError) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-zinc-950">
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-6 py-4 text-sm text-red-400">
-          {loadError}
+      <div className="grid h-screen place-items-center bg-zinc-950 px-4">
+        <div role="alert" className="w-full max-w-sm text-center">
+          <div
+            aria-hidden="true"
+            className="mx-auto mb-4 grid size-12 place-items-center rounded-full bg-red-500/10 font-mono text-lg text-red-300 ring-1 ring-red-500/20"
+          >
+            !
+          </div>
+          <h1 className="text-lg font-semibold text-white">Can&apos;t open this document</h1>
+          <p className="mt-2 text-sm text-zinc-400">
+            {loadError}. It may have been deleted, or the owner may have removed your access.
+          </p>
+          <Link
+            to="/dashboard"
+            className="mt-6 inline-block rounded-md bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition hover:bg-white"
+          >
+            Back to your documents
+          </Link>
         </div>
-        <Link to="/dashboard" className="text-sm text-zinc-400 transition hover:text-white">
-          ← Back to Dashboard
-        </Link>
       </div>
     );
   }
@@ -248,7 +253,7 @@ export function EditorPage() {
   return (
     <div className="flex h-screen flex-col bg-zinc-950">
       {/* ─── Top toolbar ──────────────────────────────────────────────── */}
-      <header className="flex shrink-0 items-center justify-between border-b border-zinc-800/80 bg-zinc-900/60 px-4 py-2 backdrop-blur">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-zinc-800/80 bg-zinc-900/60 px-3 py-2 backdrop-blur sm:px-4">
         <div className="flex min-w-0 items-center gap-3">
           <Link
             to="/dashboard"
@@ -279,14 +284,9 @@ export function EditorPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <CollaboratorAvatars people={people} />
 
-          {versionNotice && (
-            <span role="status" className="text-xs text-emerald-300">
-              {versionNotice}
-            </span>
-          )}
           {can(role, 'revision:create') && (
             <button
               type="button"
@@ -324,7 +324,7 @@ export function EditorPage() {
                 ? 'Change language'
                 : 'Only the owner can change the language'
             }
-            className="rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200 outline-none transition focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="hidden rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200 outline-none transition focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 sm:block"
           >
             {LANGUAGE_OPTIONS.map(({ value, label }) => (
               <option key={value} value={value}>
@@ -347,8 +347,11 @@ export function EditorPage() {
           )}
 
           {role && (
-            <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs tracking-wider text-zinc-500 uppercase">
-              {role}
+            <span
+              className="hidden rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400 sm:inline"
+              title="Your role on this document"
+            >
+              {roleLabel(role)}
             </span>
           )}
         </div>
@@ -387,7 +390,8 @@ export function EditorPage() {
             fontSize: 14,
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace",
             fontLigatures: true,
-            minimap: { enabled: true },
+            // The minimap costs a quarter of a phone screen; keep it for wider ones.
+            minimap: { enabled: window.innerWidth >= 768 },
             lineNumbers: 'on',
             scrollBeyondLastLine: true,
             automaticLayout: true,

@@ -152,16 +152,35 @@ async function connectLikeABrowser(attempts = 10) {
 }
 
 /**
- * Nginx routes to both instances (Docker DNS has caught up after restarts).
- * Probes an unauthenticated 404 so the polling does not count against the
- * user's API rate limit.
+ * The backend addresses Nginx used for a burst of probes: an unauthenticated
+ * 404, so the polling does not count against the user's API rate limit.
  */
+async function routedUpstreams() {
+  const since = new Date(Date.now() - 1_000).toISOString();
+  for (let i = 0; i < 6; i += 1) await api('GET', '/api/routing-probe');
+  return new Set(logsSince('nginx', since).match(/[\d.]+(?=:4000)/g) ?? []);
+}
+
+/** Nginx routes to both instances (Docker DNS has caught up after restarts). */
 async function bothInstancesRouted() {
   return until(async () => {
-    const since = new Date(Date.now() - 1_000).toISOString();
-    for (let i = 0; i < 6; i += 1) await api('GET', '/api/routing-probe');
-    const upstreams = new Set(logsSince('nginx', since).match(/"upstream":"[\d.]+:4000"/g) ?? []);
-    if (upstreams.size === 2) return true;
+    if ((await routedUpstreams()).size >= 2) return true;
+    await sleep(500);
+    return false;
+  }, 30_000);
+}
+
+/**
+ * Nginx sends traffic to replica `n`. Not "to both": least_conn rightly sends
+ * new requests to whichever replica holds fewer of the open WebSockets, so
+ * after a restart the probes may all go to the restarted one.
+ */
+async function replicaRouted(n) {
+  const ip = docker(
+    `inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" ${replica(n)}`,
+  ).trim();
+  return until(async () => {
+    if ((await routedUpstreams()).has(ip)) return true;
     await sleep(500);
     return false;
   }, 30_000);
@@ -253,7 +272,7 @@ async function failover() {
 
   const since = new Date().toISOString();
   await startReplica(2);
-  check('the restarted backend-2 gets traffic again', await bothInstancesRouted());
+  check('the restarted backend-2 gets traffic again', await replicaRouted(2));
   const fresh = [];
   for (let i = 0; i < 4; i += 1) fresh.push((await connectLikeABrowser()).client);
   check(

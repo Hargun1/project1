@@ -2,33 +2,37 @@ import { useCallback, useEffect, useState } from 'react';
 import { StatusPill } from '../components/StatusPill.jsx';
 import { toneForDependency } from '../components/status-tone.js';
 import { ApiError } from '../services/api.js';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../auth/useAuth.js';
 import { getHealth, getReadiness } from '../services/health.service.js';
 
 /**
- * Phase 1's real page: it proves the whole vertical slice works — a request
- * leaves the browser, Vite (dev) or Nginx (prod) proxies it, Express answers, and
- * Prisma round-trips PostgreSQL to produce the readiness result.
+ * The home page: what the app does, a way in, and live system status. The
+ * status cards prove the whole vertical slice works — a request leaves the
+ * browser, Vite (dev) or Nginx (prod) proxies it, Express answers, and Prisma
+ * round-trips PostgreSQL to produce the readiness result.
  *
  * A probe is `{ state: 'loading' }`, `{ state: 'ok', data }`, or
  * `{ state: 'error', message, requestId? }`.
  */
 
-const PHASES = [
-  { number: 1, name: 'Foundation', done: true },
-  { number: 2, name: 'Authentication', done: true },
-  { number: 3, name: 'Documents', done: true },
-  { number: 4, name: 'Monaco editor', done: true },
-  { number: 5, name: 'WebSockets', done: true },
-  { number: 6, name: 'Yjs collaboration', done: true },
-  { number: 7, name: 'Presence', done: true },
-  { number: 8, name: 'Redis Pub/Sub', done: true },
-  { number: 9, name: 'Persistence + revisions', done: true },
-  { number: 10, name: 'Role-based access', done: true },
-  { number: 11, name: 'Security hardening', done: true },
-  { number: 12, name: 'Docker + Nginx', done: true },
-  { number: 13, name: 'Testing', done: true },
-  { number: 14, name: 'HTTPS + scaling (AWS: not deployed)', done: true },
-  { number: 15, name: 'Polish + docs', done: false },
+const FEATURES = [
+  {
+    title: 'Real-time editing',
+    text: 'Several people type in one file at once. Edits merge through a CRDT (Yjs), so there are no locks and no conflicts.',
+  },
+  {
+    title: 'Live presence',
+    text: 'See who is here, with named, coloured cursors and selections, on every connected instance.',
+  },
+  {
+    title: 'Revision history',
+    text: 'Versions are stored as binary CRDT snapshots; restoring one adds a new version and never rewrites history.',
+  },
+  {
+    title: 'Sharing with roles',
+    text: 'Owner, editor or viewer, enforced on the server for every request and every WebSocket message.',
+  },
 ];
 
 function toProbe(result) {
@@ -60,6 +64,7 @@ function StatusCard({ title, tone, pill, detail }) {
 }
 
 export function StatusPage() {
+  const { isAuthenticated } = useAuth();
   const [health, setHealth] = useState({ state: 'loading' });
   const [readiness, setReadiness] = useState({ state: 'loading' });
   const [checkedAt, setCheckedAt] = useState(null);
@@ -133,18 +138,57 @@ export function StatusPage() {
 
   return (
     <div className="space-y-10">
-      <section className="space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-emerald-400/80">
-          Phase 14 — collaboration, hardened, containerised, tested, scalable
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight text-white">
-          Real-time collaborative code editor
+      <section className="space-y-5">
+        <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          Write code together, in real time.
         </h1>
-        <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">
-          Monaco + Yjs CRDTs over authenticated WebSockets, fanned across backend instances with
-          Redis Pub/Sub and persisted as binary Yjs snapshots in PostgreSQL. This page reads the
-          backend&apos;s liveness and readiness endpoints through the shared contract package.
+        <p className="max-w-2xl text-sm leading-relaxed text-zinc-400 sm:text-base">
+          A collaborative code editor built on Monaco, the editor inside VS Code. Changes travel
+          over authenticated WebSockets, merge as Yjs CRDTs, reach every server instance through
+          Redis Pub/Sub, and are stored as binary snapshots in PostgreSQL.
         </p>
+        <div className="flex flex-wrap gap-3">
+          {isAuthenticated ? (
+            <Link
+              to="/dashboard"
+              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500"
+            >
+              Open your documents
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/register"
+                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500"
+              >
+                Create an account
+              </Link>
+              <Link
+                to="/login"
+                className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition hover:bg-zinc-800"
+              >
+                Sign in
+              </Link>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="features-heading" className="space-y-4">
+        <h2 id="features-heading" className="sr-only">
+          Features
+        </h2>
+        <ul className="grid gap-3 sm:grid-cols-2">
+          {FEATURES.map((feature) => (
+            <li
+              key={feature.title}
+              className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4"
+            >
+              <h3 className="text-sm font-medium text-zinc-100">{feature.title}</h3>
+              <p className="mt-1.5 text-sm leading-relaxed text-zinc-400">{feature.text}</p>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="space-y-4">
@@ -172,26 +216,6 @@ export function StatusPage() {
           <StatusCard {...databaseCard} />
           <StatusCard {...redisCard} />
         </div>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-medium text-zinc-200">Build phases</h2>
-        <ol className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
-          {PHASES.map((phase) => (
-            <li key={phase.number} className="flex items-center gap-2.5 text-sm">
-              <span
-                className={`grid size-5 shrink-0 place-items-center rounded font-mono text-[10px] ${
-                  phase.done
-                    ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-500/30'
-                    : 'bg-zinc-800/70 text-zinc-500 ring-1 ring-inset ring-zinc-700/60'
-                }`}
-              >
-                {phase.done ? '✓' : phase.number}
-              </span>
-              <span className={phase.done ? 'text-zinc-200' : 'text-zinc-500'}>{phase.name}</span>
-            </li>
-          ))}
-        </ol>
       </section>
     </div>
   );
