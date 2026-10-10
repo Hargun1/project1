@@ -233,10 +233,10 @@ Both are covered by integration tests against real PostgreSQL and Redis
 
 ## Planned, not implemented
 
-| Control                                                     | Phase |
-| ----------------------------------------------------------- | ----- |
-| HTTPS at the load balancer, HSTS, `Secure` cookies over TLS | 14    |
-| Secrets from a secrets manager instead of an env file       | 14    |
+| Control                                                      | Phase             |
+| ------------------------------------------------------------ | ----------------- |
+| A publicly trusted certificate on a real domain (deployment) | 14 (runbook only) |
+| Secrets from a secrets manager instead of an env file        | 14                |
 
 ## Standing rules
 

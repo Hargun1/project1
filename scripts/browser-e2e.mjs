@@ -16,11 +16,8 @@
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright-core';
+import { BASE, IS_LOCAL } from './lib/target.mjs';
 
-const BASE = (process.argv[2] ?? process.env.STACK_URL ?? 'http://localhost:8080').replace(
-  /\/$/,
-  '',
-);
 const PASSWORD = 'correct-horse-battery';
 
 const CHROME_CANDIDATES = [
@@ -47,7 +44,11 @@ const browser = await chromium.launch({ executablePath, headless: true });
 
 /** One user in their own browser context (own cookies), with problem recorders. */
 async function newUser(name) {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    // The local stack's certificate is self-signed (nginx/40-tls.sh).
+    ignoreHTTPSErrors: IS_LOCAL,
+  });
   const page = await context.newPage();
   const consoleErrors = [];
   const failedRequests = [];
@@ -189,10 +190,10 @@ try {
 
   // ── Which instance served whom ─────────────────────────────────────────────
   if (process.env.SKIP_INSTANCE_CHECK !== '1') {
-    const logs = execSync('docker compose --profile app logs backend-1 backend-2 --since 10m', {
+    const logs = execSync('docker compose --profile app logs backend --since 10m', {
       encoding: 'utf8',
     });
-    // Lines look like `backend-2-1  | {..."userId":"…",...,"msg":"ws connection authenticated"}`.
+    // Lines look like `backend-2  | {..."userId":"…",...,"msg":"ws connection authenticated"}`.
     const served = (userId) =>
       new Set(
         logs

@@ -103,8 +103,12 @@ dependency for authentication; it is not one for document integrity.
 
 ## Running two instances locally
 
-**Behind Nginx (Phase 12):** `npm run stack:up` starts `backend-1` and
-`backend-2` behind Nginx on <http://localhost:8080>. Nginx balances with
+**Behind Nginx (Phases 12 and 14):** `npm run stack:up` starts two `backend`
+replicas behind Nginx on <https://localhost:8443>;
+`docker compose --profile app up -d --scale backend=3` adds a third with no
+configuration change (Nginx discovers replicas through Docker's DNS), and
+`npm run stack:scale` proves scale-out and scale-in with nine live clients.
+Nginx balances with
 `least_conn`, so two browsers end up on different instances; the backend logs
 name the instance for every socket. Load balancing, failover and the measured
 behaviour are in [deployment.md](deployment.md#load-balancing).

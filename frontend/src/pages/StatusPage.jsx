@@ -27,7 +27,7 @@ const PHASES = [
   { number: 11, name: 'Security hardening', done: true },
   { number: 12, name: 'Docker + Nginx', done: true },
   { number: 13, name: 'Testing', done: true },
-  { number: 14, name: 'AWS + scaling', done: false },
+  { number: 14, name: 'HTTPS + scaling (AWS: not deployed)', done: true },
   { number: 15, name: 'Polish + docs', done: false },
 ];
 
@@ -135,7 +135,7 @@ export function StatusPage() {
     <div className="space-y-10">
       <section className="space-y-3">
         <p className="font-mono text-xs uppercase tracking-widest text-emerald-400/80">
-          Phase 13 — collaboration, hardened, containerised, tested
+          Phase 14 — collaboration, hardened, containerised, tested, scalable
         </p>
         <h1 className="text-3xl font-semibold tracking-tight text-white">
           Real-time collaborative code editor

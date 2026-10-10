@@ -12,13 +12,16 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   test: {
-    projects: ['./vitest.config.js', './vitest.integration.config.js'],
+    // Worker threads, set per project (a root-level `pool` does not reach
+    // projects). With the default child processes, about one run in four died
+    // with ERR_IPC_CHANNEL_CLOSED from the process pool; with threads, 17
+    // consecutive runs passed. Native modules (Prisma's engine, bcrypt) work in
+    // worker threads.
+    projects: [
+      { extends: './vitest.config.js', test: { pool: 'threads' } },
+      { extends: './vitest.integration.config.js', test: { pool: 'threads' } },
+    ],
     fileParallelism: false,
-    // One worker process for every file (files still get fresh module state).
-    // With a process per file, about one run in three died at start-up with
-    // ERR_IPC_CHANNEL_CLOSED while coverage was being collected; files run one
-    // at a time here anyway, so nothing is lost.
-    poolOptions: { forks: { singleFork: true } },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.js'],

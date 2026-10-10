@@ -5,61 +5,25 @@
 #                                              (npm run dev:backend / dev:frontend).
 #
 #   docker compose --profile app up -d --build The whole system in containers:
-#   (npm run stack:up)                         Nginx on :8080 serving the frontend
-#                                              and load-balancing two backend
-#                                              instances linked by Redis Pub/Sub,
-#                                              after a one-shot migration job.
+#   (npm run stack:up)                         Nginx serving the frontend over HTTPS
+#                                              (https://localhost:8443; :8080
+#                                              redirects) and load-balancing the
+#                                              backend replicas, linked by Redis
+#                                              Pub/Sub, after a one-shot migration.
 #
-#        browser ──► nginx :8080 ──► backend-1 ─┐
-#                       (static)  └► backend-2 ─┼─► redis (Pub/Sub, sessions, limits)
-#                                               └─► postgres (documents, revisions)
+#        browser ──► nginx :8443 ──► backend × N ─┬─► redis (Pub/Sub, sessions, limits)
+#                       (static)     (default 2)  └─► postgres (documents, revisions)
+#
+# Scaling (Phase 14): `docker compose --profile app up -d --scale backend=3`.
+# Nginx finds every replica through Docker's DNS; nothing else changes.
 #
 # Every value comes from the root .env; nothing secret is written here. The
 # stack runs the production images with NODE_ENV=production, so the backend
 # refuses to start while JWT_SECRET / JWT_REFRESH_SECRET hold the "change-me"
 # placeholders from .env.example (see README → "Run the whole stack in Docker").
+# docker-compose.prod.yml adapts this file to a real server (docs/aws.md).
 
 name: collab-editor
-
-# Shared by both backend instances.
-x-backend: &backend
-  build:
-    context: .
-    dockerfile: backend/Dockerfile
-    target: runtime
-  image: collab-editor-backend
-  profiles: [app]
-  restart: unless-stopped
-  # Tini as PID 1: forwards SIGTERM to Node and reaps zombies.
-  init: true
-  # server.js gives itself 10 s to close sockets and flush documents.
-  stop_grace_period: 15s
-  # Tuning knobs (rate limits, TTLs, secrets) come from .env ...
-  env_file:
-    - path: .env
-      required: false
-  # ... and these replace the host-development values for the container network.
-  environment:
-    NODE_ENV: production
-    PORT: 4000
-    LOG_LEVEL: ${STACK_LOG_LEVEL:-info}
-    # The browser's origin: used for CORS, the CSRF Origin check and the
-    # WebSocket Origin check. Must match the address in the address bar.
-    CLIENT_URL: ${STACK_CLIENT_URL:-http://localhost:8080}
-    DATABASE_URL: postgresql://${POSTGRES_USER:-collab}:${POSTGRES_PASSWORD:-collab_dev_password}@postgres:5432/${POSTGRES_DB:-collab_editor}?schema=public
-    REDIS_URL: redis://redis:6379
-    # Exactly one proxy (Nginx) in front.
-    TRUST_PROXY_HOPS: 1
-  depends_on:
-    postgres:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
-    migrate:
-      condition: service_completed_successfully
-  # Not published: the only way in is through Nginx.
-  expose:
-    - '4000'
 
 services:
   postgres:
@@ -96,9 +60,9 @@ services:
       timeout: 3s
       retries: 12
 
-  # Applies pending Prisma migrations once, then exits. Both backends wait for
-  # it to *succeed*, so no instance ever runs against an old schema, and two
-  # instances never race to migrate the same database.
+  # Applies pending Prisma migrations once, then exits. Every backend replica
+  # waits for it to *succeed*, so no instance ever runs against an old schema,
+  # and replicas never race to migrate the same database.
   migrate:
     build:
       context: .
@@ -114,15 +78,49 @@ services:
       postgres:
         condition: service_healthy
 
-  backend-1:
-    <<: *backend
-    # The hostname is part of the instance id in every log line, so the logs
-    # show which instance served which socket.
-    hostname: backend-1
-
-  backend-2:
-    <<: *backend
-    hostname: backend-2
+  # The app instances. One service, N identical replicas: any replica can serve
+  # any document (edits travel over Redis, state lives in PostgreSQL), so the
+  # count is a deployment choice, not an architecture change.
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: runtime
+    image: collab-editor-backend
+    profiles: [app]
+    deploy:
+      replicas: ${BACKEND_REPLICAS:-2}
+    restart: unless-stopped
+    # Tini as PID 1: forwards SIGTERM to Node and reaps zombies.
+    init: true
+    # server.js gives itself 10 s to close sockets and flush documents.
+    stop_grace_period: 15s
+    # Tuning knobs (rate limits, TTLs, secrets) come from .env ...
+    env_file:
+      - path: .env
+        required: false
+    # ... and these replace the host-development values for the container network.
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      LOG_LEVEL: ${STACK_LOG_LEVEL:-info}
+      # The browser's origin: used for CORS, the CSRF Origin check and the
+      # WebSocket Origin check. Must match the address in the address bar.
+      CLIENT_URL: ${STACK_CLIENT_URL:-https://localhost:8443}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-collab}:${POSTGRES_PASSWORD:-collab_dev_password}@postgres:5432/${POSTGRES_DB:-collab_editor}?schema=public
+      REDIS_URL: redis://redis:6379
+      # Exactly one proxy (Nginx) in front.
+      TRUST_PROXY_HOPS: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Not published: the only way in is through Nginx.
+    expose:
+      - '4000'
 
   nginx:
     build:
@@ -133,10 +131,16 @@ services:
     restart: unless-stopped
     ports:
       - '${STACK_HTTP_PORT:-8080}:80'
+      - '${STACK_HTTPS_PORT:-8443}:443'
+    environment:
+      # Where port 80 redirects to; must match the published HTTPS port.
+      PUBLIC_HTTPS_PORT: ${STACK_HTTPS_PORT:-8443}
+    volumes:
+      # Optional real certificate (fullchain.pem + privkey.pem, e.g. from
+      # mkcert). An empty folder means a self-signed certificate is generated.
+      - ./nginx/certs:/etc/nginx/certs:ro
     depends_on:
-      backend-1:
-        condition: service_healthy
-      backend-2:
+      backend:
         condition: service_healthy
 
 volumes:

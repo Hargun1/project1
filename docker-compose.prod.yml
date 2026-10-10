@@ -1,0 +1,50 @@
+# Production override for a single server (docs/aws.md, step 1):
+#
+#   DOMAIN=editor.example.com IMAGE_PREFIX=ghcr.io/<owner>/<repo> IMAGE_TAG=<git sha> \
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile app up -d --wait
+#
+# Differences from the local stack:
+#   - images come from the registry CI publishes to (no building on the server);
+#   - Nginx listens on the standard ports 80/443 and uses the Let's Encrypt
+#     certificate for DOMAIN (HTTP stays open only for the redirect and renewal);
+#   - PostgreSQL and Redis are not published to the host: only Nginx is reachable;
+#   - the browser origin is https://DOMAIN.
+# Secrets (JWT_*, POSTGRES_PASSWORD) still come from the server's .env, which is
+# created on the server and never committed.
+
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  migrate:
+    image: ${IMAGE_PREFIX:?set IMAGE_PREFIX, e.g. ghcr.io/owner/repo}/migrate:${IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: ${PULL_POLICY:-always}
+
+  backend:
+    image: ${IMAGE_PREFIX}/backend:${IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: ${PULL_POLICY:-always}
+    environment:
+      CLIENT_URL: https://${DOMAIN:?set DOMAIN, e.g. editor.example.com}
+
+  nginx:
+    image: ${IMAGE_PREFIX}/web:${IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: ${PULL_POLICY:-always}
+    ports: !override
+      - '${PROD_HTTP_PORT:-80}:80'
+      - '${PROD_HTTPS_PORT:-443}:443'
+    environment:
+      # The standard port: redirects need no port number.
+      PUBLIC_HTTPS_PORT: ${PROD_HTTPS_PORT:-443}
+      # certbot writes live/<domain>/{fullchain,privkey}.pem as symlinks into
+      # archive/, so the whole /etc/letsencrypt is mounted.
+      TLS_CERT_DIR: /etc/letsencrypt/live/${DOMAIN}
+    volumes: !override
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # certbot --webroot writes HTTP-01 challenges here; Nginx serves them on :80.
+      - /var/www/acme:/var/www/acme:ro

@@ -12,8 +12,9 @@
 | Unit (backend)        | `npm test`                 | 169   | nothing                   | ✅    |
 | Unit (frontend)       | `npm test`                 | 38    | nothing                   | ✅    |
 | Integration (backend) | `npm run test:integration` | 32    | PostgreSQL + Redis        | ✅    |
-| Stack smoke           | `npm run stack:smoke`      | 18    | the Docker stack          | ✅    |
+| Stack smoke           | `npm run stack:smoke`      | 20    | the Docker stack          | ✅    |
 | Browser end-to-end    | `npm run stack:e2e`        | 15    | the Docker stack + Chrome | ✅    |
+| Scaling (Phase 14)    | `npm run stack:scale`      | 9     | the Docker stack          | ✅    |
 | Resilience            | `npm run stack:resilience` | 21    | the Docker stack          | local |
 
 ```bash
@@ -21,7 +22,7 @@ npm test                                   # unit tests, all workspaces (seconds
 npm run infra:up && npm run test:integration   # real PostgreSQL + Redis (~35 s)
 npm run test:coverage                      # unit + integration, with coverage
 npm run stack:up                           # then, against the running stack:
-npm run stack:smoke && npm run stack:e2e && npm run stack:resilience
+npm run stack:smoke && npm run stack:e2e && npm run stack:scale && npm run stack:resilience
 ```
 
 ### 1. Unit tests (Vitest)
@@ -74,10 +75,14 @@ Redis. Files run one at a time.
 with V8. CI fails below 90 % statements / 85 % branches / 90 % functions /
 90 % lines, and uploads the HTML report.
 
-It runs every file in one worker process (`singleFork`). With a process per
-file, about one run in three died before starting (`ERR_IPC_CHANNEL_CLOSED`)
-while coverage was being collected; with one process, 5 of 5 runs passed. Files
-run one at a time here anyway, and each still gets fresh module state.
+It runs in **worker threads**, configured per project (a root-level `pool`
+setting does not reach Vitest projects). With the default child-process
+workers, about one run in four died before starting with
+`ERR_IPC_CHANNEL_CLOSED`. Two earlier attempts (one worker process; a
+non-blocking migration step) did not fix it, which was only visible after
+repeating the run many times; with threads, 17 consecutive runs passed. A few
+runs right after the change exited with code 127 and no output and could not be
+reproduced afterwards.
 
 | Backend coverage   | Statements | Branches | Functions | Lines  |
 | ------------------ | ---------- | -------- | --------- | ------ |
@@ -94,9 +99,12 @@ That is what the mutation checks below are for.
 
 ### 4. Stack tests (Docker)
 
-Against the production images, through Nginx only, like a browser:
+Against the production images, over HTTPS through Nginx only, like a browser
+(`scripts/lib/target.mjs` picks the URL; a self-signed certificate is accepted
+for localhost only):
 
-- **`scripts/smoke-stack.mjs`** — health routing, the static frontend and its
+- **`scripts/smoke-stack.mjs`** — the HTTP→HTTPS redirect, no HSTS on
+  localhost, health routing, the static frontend and its
   headers, SPA fallback, asset caching, auth through the proxy, request-id
   correlation, four WebSocket clients converging across both instances.
 - **`scripts/browser-e2e.mjs`** — two headless Chrome users through the **real
@@ -105,6 +113,11 @@ Against the production images, through Nginx only, like a browser:
   presence, reload and stay signed in with the document intact; zero CSP
   violations, no failed requests, no console errors; served by different backend
   instances. Uses `playwright-core` with an installed Chrome (`CHROME_PATH`).
+- **`scripts/scaling-stack.mjs`** (Phase 14) — `--scale backend=3`: Nginx routes
+  to the new replica with no config change and nine clients spread 3/3/3, every
+  edit reaches all of them; `--scale backend=2`: the removed replica shuts down
+  gracefully, only its sockets close, they reconnect elsewhere, editing
+  continues and Nginx stops routing to it.
 - **`scripts/resilience-stack.mjs`** — `docker stop` (graceful shutdown keeps
   an unsaved edit), both backends down (JSON 503, app still served), one
   backend down (only its sockets move, editing and the API continue), the

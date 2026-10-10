@@ -17,12 +17,7 @@
 import { execSync } from 'node:child_process';
 import * as Y from 'yjs';
 import { fromBase64, toBase64, YDOC_TEXT_KEY } from '@collab/shared';
-
-const BASE = (process.argv[2] ?? process.env.STACK_URL ?? 'http://localhost:8080').replace(
-  /\/$/,
-  '',
-);
-const WS_BASE = BASE.replace(/^http/, 'ws');
+import { BASE, WS_BASE } from './lib/target.mjs';
 
 let failures = 0;
 function check(label, ok, detail = '') {
@@ -47,6 +42,18 @@ const compose = (args) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   }).toString();
 const logsSince = (service, since) => compose(`logs ${service} --no-log-prefix --since ${since}`);
+// One replica of the scaled `backend` service, by its container name.
+const docker = (args) =>
+  execSync(`docker ${args}`, { stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+const replica = (n) => `collab-editor-backend-${n}`;
+const replicaLogs = (n, since) => docker(`logs ${replica(n)} --since ${since} 2>&1`);
+async function startReplica(n) {
+  docker(`start ${replica(n)}`);
+  await until(
+    () => docker(`inspect -f "{{.State.Health.Status}}" ${replica(n)}`).trim() === 'healthy',
+    60_000,
+  );
+}
 
 async function api(method, path, { token, body } = {}) {
   const response = await fetch(`${BASE}${path}`, {
@@ -167,8 +174,8 @@ async function gracefulShutdown() {
   await sleep(300); // inside the 2 s save debounce: not persisted yet
 
   const since = new Date().toISOString();
-  compose('stop backend-1 backend-2');
-  const logs = logsSince('backend-1 backend-2', since);
+  compose('stop backend');
+  const logs = logsSince('backend', since);
   check(
     'docker stop delivers SIGTERM and both backends shut down gracefully',
     (logs.match(/WebSocket server closed/g) ?? []).length === 2 && !/forcing exit/.test(logs),
@@ -190,7 +197,7 @@ async function gracefulShutdown() {
   const page = await api('GET', '/');
   check('…while Nginx keeps serving the frontend', page.status === 200);
 
-  compose('up -d --wait backend-1 backend-2');
+  compose('up -d --wait backend');
   check('after both backends restart, Nginx routes to both again', await bothInstancesRouted());
   const after = connect(await ticket());
   check(
@@ -206,7 +213,7 @@ async function failover() {
   for (let i = 0; i < 4; i += 1) clients.push(connect(await ticket()));
   await until(() => clients.every((client) => client.synced()));
 
-  compose('stop backend-2');
+  docker(`stop ${replica(2)}`);
   await until(() => clients.some((client) => client.closeCode !== null), 5_000);
   await sleep(300);
   const lost = clients.filter((client) => client.closeCode !== null);
@@ -245,13 +252,13 @@ async function failover() {
   check('the API keeps answering with one instance down', ok === 20, `${ok}/20`);
 
   const since = new Date().toISOString();
-  compose('up -d --wait backend-2');
+  await startReplica(2);
   check('the restarted backend-2 gets traffic again', await bothInstancesRouted());
   const fresh = [];
   for (let i = 0; i < 4; i += 1) fresh.push((await connectLikeABrowser()).client);
   check(
     'new sockets are balanced onto it',
-    /ws connection authenticated/.test(logsSince('backend-2', since)),
+    /ws connection authenticated/.test(replicaLogs(2, since)),
   );
   for (const client of [...clients, ...moved, ...fresh]) client.close();
 }
@@ -267,7 +274,7 @@ async function redisOutage() {
   );
   check('…but /healthz stays 200', (await api('GET', '/healthz')).status === 200);
   await sleep(12_000); // more than one healthcheck interval
-  const ps = compose('ps --format "{{.Service}} {{.Status}}"');
+  const ps = compose('ps --format "{{.Name}} {{.Status}}"');
   check(
     '…and Docker keeps both backends healthy: liveness, not readiness, decides restarts',
     /backend-1 .*\(healthy\)/.test(ps) && /backend-2 .*\(healthy\)/.test(ps),
@@ -306,7 +313,7 @@ function logHygiene(since) {
       !access.some((line) => line.includes('ticket=')),
   );
   check('health probes are not access-logged', !/"uri":"\/(healthz|readyz)"/.test(nginx));
-  const requests = logsSince('backend-1', since)
+  const requests = replicaLogs(1, since)
     .split('\n')
     .filter((line) => line.includes('request completed'));
   check(

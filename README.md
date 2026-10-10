@@ -10,16 +10,18 @@ server-side lock, edits are fanned out **across backend instances** with Redis
 Pub/Sub so the system scales horizontally, and document state is persisted as
 **binary Yjs snapshots** so a restored document keeps its merge history.
 
-> **Status: Phase 13 of 15 (Testing) complete.** Accounts, documents,
+> **Status: Phase 14 of 15 (HTTPS + horizontal scaling) complete, except the AWS deployment itself.** Accounts, documents,
 > sharing with OWNER / EDITOR / VIEWER roles, the Monaco editor,
 > ticket-authenticated WebSockets, real-time CRDT editing, live presence and
 > revision history with restore work end to end, across **several backend
 > instances** linked by Redis Pub/Sub, with rate limiting, document size caps,
-> CSRF and WebSocket-origin checks. One command runs the whole system in Docker:
-> Nginx serving the app and load-balancing two backend instances. About 330
-> automated checks, from unit tests to two real browsers, run in CI
-> ([docs/testing.md](docs/testing.md)). Cloud deployment is _not_ built yet. See
-> [Build phases](#build-phases).
+> CSRF and WebSocket-origin checks. One command runs the whole system in Docker
+> over HTTPS: Nginx serving the app and load-balancing backend replicas that
+> scale with `--scale backend=N`. About 340 automated checks, from unit tests to
+> two real browsers and a scale-out/scale-in test, run in CI
+> ([docs/testing.md](docs/testing.md)), which also publishes the images. The app
+> is **not deployed publicly**: the AWS plan is written ([docs/aws.md](docs/aws.md))
+> but needs an account. See [Build phases](#build-phases).
 
 ## Architecture
 
@@ -76,7 +78,7 @@ Longer write-ups: [docs/architecture.md](docs/architecture.md),
 | Backend  | Node.js, JavaScript (ESM), Express 5, `ws`, Prisma, Zod, pino, JWT               |
 | Data     | PostgreSQL 17 (durable), Redis 7 (Pub/Sub, tickets, rate limits)                 |
 | Shared   | `@collab/shared` — roles, API envelopes and their runtime guards                 |
-| Ops      | Docker Compose, Nginx, GitHub Actions, AWS (Phase 14)                            |
+| Ops      | Docker Compose, Nginx (HTTPS), GitHub Actions + GHCR; AWS runbook (not deployed) |
 
 The whole repository is plain JavaScript with ES modules — no TypeScript, no
 build step for `shared/` or `backend/`. Node runs the source directly; only the
@@ -117,14 +119,14 @@ cp .env.example .env
 #   JWT_REFRESH_SECRET=<openssl rand -hex 32>
 npm install            # only needed for the smoke test
 npm run stack:up       # build, start, wait until every container is healthy
-npm run stack:smoke    # 18 checks through Nginx, including cross-instance editing
+npm run stack:smoke    # 20 checks through Nginx, including cross-instance editing
 ```
 
-Open <http://localhost:8080> in two browsers (or one normal and one private
+Open <https://localhost:8443> in two browsers (or one normal and one private
 window), sign up as two users, share a document and type in both: Nginx's
 `least_conn` balancing puts the two sockets on different backend instances, and
 `npm run stack:logs` shows which instance served which user. Stop one instance
-with `docker compose stop backend-1` and keep typing: its users reconnect to the
+with `docker stop collab-editor-backend-1` and keep typing: its users reconnect to the
 other instance. Details, failure tests and troubleshooting:
 [docs/deployment.md](docs/deployment.md).
 
@@ -186,26 +188,27 @@ trust). `.env.example` lists them all with comments.
 
 ## Scripts
 
-| Command                    | What it does                                         |
-| -------------------------- | ---------------------------------------------------- |
-| `npm run dev:backend`      | Express with `node --watch` (no transpiler)          |
-| `npm run dev:frontend`     | Vite dev server on :5173, proxying the API to :4000  |
-| `npm run build`            | Bundles the frontend (nothing else needs building)   |
-| `npm run lint`             | ESLint 9 flat config over the whole monorepo         |
-| `npm test`                 | Unit tests (Vitest) in every workspace               |
-| `npm run test:integration` | Backend against real PostgreSQL + Redis (`infra:up`) |
-| `npm run test:coverage`    | Unit + integration with coverage thresholds          |
-| `npm run db:migrate`       | Creates/applies a development migration              |
-| `npm run db:studio`        | Prisma Studio                                        |
-| `npm run infra:up`         | `docker compose up -d` (PostgreSQL + Redis)          |
-| `npm run infra:down`       | Stops the containers, keeps the volume               |
-| `npm run infra:reset`      | Stops the containers **and deletes the data volume** |
-| `npm run stack:up`         | Whole system in Docker on :8080, waits until healthy |
-| `npm run stack:smoke`      | Smoke test of the running stack through Nginx        |
-| `npm run stack:e2e`        | Two headless Chrome users through the real UI        |
-| `npm run stack:resilience` | Stops containers and Redis; checks recovery          |
-| `npm run stack:logs`       | Follows every container's logs                       |
-| `npm run stack:down`       | Stops the stack, keeps the data volume               |
+| Command                    | What it does                                          |
+| -------------------------- | ----------------------------------------------------- |
+| `npm run dev:backend`      | Express with `node --watch` (no transpiler)           |
+| `npm run dev:frontend`     | Vite dev server on :5173, proxying the API to :4000   |
+| `npm run build`            | Bundles the frontend (nothing else needs building)    |
+| `npm run lint`             | ESLint 9 flat config over the whole monorepo          |
+| `npm test`                 | Unit tests (Vitest) in every workspace                |
+| `npm run test:integration` | Backend against real PostgreSQL + Redis (`infra:up`)  |
+| `npm run test:coverage`    | Unit + integration with coverage thresholds           |
+| `npm run db:migrate`       | Creates/applies a development migration               |
+| `npm run db:studio`        | Prisma Studio                                         |
+| `npm run infra:up`         | `docker compose up -d` (PostgreSQL + Redis)           |
+| `npm run infra:down`       | Stops the containers, keeps the volume                |
+| `npm run infra:reset`      | Stops the containers **and deletes the data volume**  |
+| `npm run stack:up`         | Whole system in Docker, https://localhost:8443        |
+| `npm run stack:scale`      | Scales to 3 backend replicas and back, 9 live clients |
+| `npm run stack:smoke`      | Smoke test of the running stack through Nginx         |
+| `npm run stack:e2e`        | Two headless Chrome users through the real UI         |
+| `npm run stack:resilience` | Stops containers and Redis; checks recovery           |
+| `npm run stack:logs`       | Follows every container's logs                        |
+| `npm run stack:down`       | Stops the stack, keeps the data volume                |
 
 ## When Redis is unavailable
 
@@ -318,28 +321,32 @@ the page, served by Nginx (no inline scripts, no third-party origins), coarse
 per-IP flood limits in Nginx in front of the backend's precise ones, and a
 `draining` readiness state during graceful shutdown.
 
-Planned, and deliberately not claimed as working yet: HTTPS and HSTS, which
-belong to the cloud deployment (Phase 14).
+Implemented in Phase 14: HTTPS in Nginx (TLS 1.2/1.3, HTTP→HTTPS redirect,
+HSTS for real host names but never for localhost, Let's Encrypt-ready), with
+`Secure` cookies now travelling over TLS.
+
+Not done: a public deployment. The AWS plan is in [docs/aws.md](docs/aws.md)
+and has not been carried out.
 
 ## Build phases
 
-| #   | Phase                   | Status  |
-| --- | ----------------------- | ------- |
-| 1   | Foundation              | ✅ done |
-| 2   | Authentication          | ✅ done |
-| 3   | Documents               | ✅ done |
-| 4   | Monaco editor           | ✅ done |
-| 5   | WebSockets              | ✅ done |
-| 6   | Yjs collaboration       | ✅ done |
-| 7   | Presence + awareness    | ✅ done |
-| 8   | Redis Pub/Sub scaling   | ✅ done |
-| 9   | Persistence + revisions | ✅ done |
-| 10  | Role-based access       | ✅ done |
-| 11  | Security hardening      | ✅ done |
-| 12  | Docker + Nginx          | ✅ done |
-| 13  | Testing                 | ✅ done |
-| 14  | AWS + scaling proof     | —       |
-| 15  | Polish + documentation  | —       |
+| #   | Phase                   | Status                                       |
+| --- | ----------------------- | -------------------------------------------- |
+| 1   | Foundation              | ✅ done                                      |
+| 2   | Authentication          | ✅ done                                      |
+| 3   | Documents               | ✅ done                                      |
+| 4   | Monaco editor           | ✅ done                                      |
+| 5   | WebSockets              | ✅ done                                      |
+| 6   | Yjs collaboration       | ✅ done                                      |
+| 7   | Presence + awareness    | ✅ done                                      |
+| 8   | Redis Pub/Sub scaling   | ✅ done                                      |
+| 9   | Persistence + revisions | ✅ done                                      |
+| 10  | Role-based access       | ✅ done                                      |
+| 11  | Security hardening      | ✅ done                                      |
+| 12  | Docker + Nginx          | ✅ done                                      |
+| 13  | Testing                 | ✅ done                                      |
+| 14  | AWS + scaling proof     | ✅ done locally (AWS: runbook, not deployed) |
+| 15  | Polish + documentation  | —                                            |
 
 ## License
 

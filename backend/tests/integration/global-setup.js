@@ -1,4 +1,5 @@
-import { execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
@@ -35,10 +36,11 @@ export default async function setup() {
     await admin.$disconnect();
   }
 
-  execSync('npx prisma migrate deploy', {
+  // Asynchronous, so Vitest's main process is not frozen for seconds while it
+  // also starts workers (it runs this before the test files).
+  await promisify(exec)('npx prisma migrate deploy', {
     cwd: backendDir,
     env: { ...process.env, DATABASE_URL },
-    stdio: 'pipe',
   });
 
   const redis = new Redis(REDIS_URL, {

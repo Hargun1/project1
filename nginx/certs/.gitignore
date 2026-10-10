@@ -1,0 +1,4 @@
+# Local TLS certificates (e.g. from mkcert) go here as fullchain.pem and
+# privkey.pem. Never committed. Empty = a self-signed one is generated.
+*
+!.gitignore

@@ -31,9 +31,14 @@ RUN npm run build --workspace @collab/frontend
 # host names at runtime (`server ... resolve`), so a restarted backend container
 # with a new IP is found again without reloading Nginx.
 FROM nginx:1.28-alpine AS runtime
+# openssl: only to make a self-signed certificate when none is mounted (40-tls.sh).
+RUN apk add --no-cache openssl
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
-COPY nginx/proxy-headers.conf nginx/security-headers.conf /etc/nginx/snippets/
+COPY nginx/proxy-headers.conf nginx/security-headers.conf nginx/app-locations.conf /etc/nginx/snippets/
+# Runs before Nginx starts: certificate + HTTP→HTTPS redirect (Phase 14).
+COPY --chmod=755 nginx/40-tls.sh /docker-entrypoint.d/40-tls.sh
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 80 443
+# Port 80 answers /nginx-health itself (no redirect), so the probe needs no TLS.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]

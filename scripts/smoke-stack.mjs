@@ -2,7 +2,7 @@
 // only — exactly the path a browser takes:
 //
 //   npm run stack:up && npm run stack:smoke
-//   node scripts/smoke-stack.mjs http://localhost:8080
+//   node scripts/smoke-stack.mjs https://localhost:8443
 //
 // Checks the static frontend and its headers, health routing, the auth flow,
 // and real-time collaboration between four WebSocket clients. Nginx's
@@ -14,12 +14,7 @@
 
 import * as Y from 'yjs';
 import { fromBase64, toBase64, YDOC_TEXT_KEY } from '@collab/shared';
-
-const BASE = (process.argv[2] ?? process.env.STACK_URL ?? 'http://localhost:8080').replace(
-  /\/$/,
-  '',
-);
-const WS_BASE = BASE.replace(/^http/, 'ws');
+import { BASE, IS_LOCAL, WS_BASE } from './lib/target.mjs';
 
 let failures = 0;
 function check(label, ok, detail = '') {
@@ -104,6 +99,21 @@ check(
   JSON.stringify(readiness.json?.checks),
 );
 
+// ── HTTPS ──────────────────────────────────────────────────────────────────
+// The plain-HTTP address of the same stack: :8080 locally (next to :8443),
+// the default port 80 for a real deployment.
+const plain = await fetch(
+  `${BASE.replace(/^https:/, 'http:').replace(':8443', ':8080')}/editor/x?y=1`,
+  {
+    redirect: 'manual',
+  },
+);
+check(
+  'plain HTTP redirects to HTTPS, keeping the path',
+  plain.status === 301 && plain.headers.get('location') === `${BASE}/editor/x?y=1`,
+  `${plain.status} → ${plain.headers.get('location')}`,
+);
+
 // ── Static frontend ────────────────────────────────────────────────────────
 const index = await http('GET', '/');
 const csp = index.headers.get('content-security-policy') ?? '';
@@ -123,6 +133,14 @@ check(
   `server: ${index.headers.get('server')}`,
 );
 check('index.html is revalidated on every load', index.headers.get('cache-control') === 'no-cache');
+const hsts = index.headers.get('strict-transport-security');
+check(
+  IS_LOCAL
+    ? 'no HSTS for localhost (it would force HTTPS on every local project)'
+    : 'HSTS tells browsers to use HTTPS only',
+  IS_LOCAL ? hsts === null : /max-age=\d+/.test(hsts ?? ''),
+  `${hsts}`,
+);
 
 const deepLink = await http('GET', '/documents/00000000-0000-4000-8000-000000000000');
 check(
