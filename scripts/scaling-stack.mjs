@@ -10,6 +10,9 @@
 // 3. Scale in: back to two replicas. The removed replica shuts down
 //    gracefully; its users reconnect to the others and nobody loses an edit.
 //
+// Only the backend service is touched (--no-deps): scaling must not restart the
+// migration job, the databases or Nginx.
+//
 // Changes the replica count, so it restores the default (2) at the end.
 
 import { execSync, spawn } from 'node:child_process';
@@ -37,16 +40,22 @@ const compose = (args) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   }).toString();
 
+/** Status 0 when no connection could be made, so callers retry like a browser. */
 async function api(method, path, { token, body } = {}) {
-  const response = await fetch(`${BASE}${path}`, {
-    method,
-    headers: {
-      Origin: BASE,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method,
+      headers: {
+        Origin: BASE,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    return { status: 0, json: null };
+  }
   return { status: response.status, json: await response.json().catch(() => null) };
 }
 
@@ -146,7 +155,7 @@ async function connectLikeABrowser() {
 
 try {
   // ── 1. Scale out ───────────────────────────────────────────────────────────
-  compose('up -d --no-build --wait --scale backend=3');
+  compose('up -d --no-build --no-deps --wait --scale backend=3 backend');
   const running = compose('ps --status running --format "{{.Name}}"')
     .split('\n')
     .filter((name) => name.includes('backend')).length;
@@ -193,7 +202,7 @@ try {
   follower.stdout.on('data', (chunk) => (removedLogs += chunk));
   follower.stderr.on('data', (chunk) => (removedLogs += chunk));
 
-  compose('up -d --no-build --wait --scale backend=2');
+  compose('up -d --no-build --no-deps --wait --scale backend=2 backend');
   await until(() => /"msg":"WebSocket server closed"/.test(removedLogs), 20_000);
   follower.kill();
   await until(() => clients.some((client) => client.closeCode !== null), 10_000);
@@ -240,7 +249,7 @@ try {
     String(err.message).split(/\r?\n/).slice(0, 3).join(' | '),
   );
 } finally {
-  compose('up -d --no-build --wait --scale backend=2');
+  compose('up -d --no-build --no-deps --wait --scale backend=2 backend');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
