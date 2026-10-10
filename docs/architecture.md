@@ -78,8 +78,8 @@ each other. Using Redis as document storage would mean a `FLUSHALL` or an
 eviction is data loss.
 
 Implemented in Phase 8 and verified with two real backend processes, including
-stopping Redis mid-session; details in [scaling.md](scaling.md). Running the
-instances behind Nginx is Phase 12.
+stopping Redis mid-session; details in [scaling.md](scaling.md). Since Phase 12
+the instances run behind Nginx in Docker; see [deployment.md](deployment.md).
 
 ## Why PostgreSQL stores binary snapshots
 
@@ -127,11 +127,26 @@ compiler — it is enforced at runtime by `isRole()`, and by the Prisma enum, wh
 rejects an invalid value at the database boundary even if application code lets
 one through.
 
-Every check happens on the server, at two points: HTTP requests are checked in
-middleware, and — separately — the WebSocket layer refuses to apply an update
-from a `VIEWER`. The second check is not redundant: hiding the editor in the UI
-is a UX affordance, not a security control, and a `VIEWER` who opens a socket by
-hand must still be rejected.
+What each role may do is one table, `PERMISSIONS`, with one function, `can(role,
+action)`, in `shared/src/permissions.js`. The server uses it to enforce; the
+frontend uses the same function only to decide which buttons to show. `can()`
+throws on an unknown action, so a typo fails loudly instead of silently denying.
+
+Every check happens on the server, at three points:
+
+1. **REST:** every per-document request goes through `requirePermission`
+   (`backend/src/services/access.service.js`), which reads the caller's role
+   from PostgreSQL on each request — never from the token — and applies `can()`.
+2. **WebSocket, per message:** an edit from a socket whose role cannot
+   `document:edit` is refused. Hiding the editor in the UI is a UX affordance,
+   not a security control; a `VIEWER` who opens a socket by hand is still refused.
+3. **WebSocket, over time (§42):** when an owner changes a role, removes a
+   member or deletes the document, every instance is told (Redis channel
+   `access-changes`) to re-check the affected sockets against PostgreSQL: a
+   downgrade takes effect live, a removal closes the socket with `4003`, a
+   deletion with `4004`. The announcement carries no role, so a lost or forged
+   one cannot grant anything; each socket also re-checks every 60 s, which
+   bounds how long a lost announcement can delay a revocation.
 
 ## Request lifecycle (implemented)
 

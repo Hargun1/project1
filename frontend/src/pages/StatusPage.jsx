@@ -23,9 +23,9 @@ const PHASES = [
   { number: 7, name: 'Presence', done: true },
   { number: 8, name: 'Redis Pub/Sub', done: true },
   { number: 9, name: 'Persistence + revisions', done: true },
-  { number: 10, name: 'Role-based access', done: false },
-  { number: 11, name: 'Security hardening', done: false },
-  { number: 12, name: 'Docker + Nginx', done: false },
+  { number: 10, name: 'Role-based access', done: true },
+  { number: 11, name: 'Security hardening', done: true },
+  { number: 12, name: 'Docker + Nginx', done: true },
   { number: 13, name: 'Testing', done: false },
   { number: 14, name: 'AWS + scaling', done: false },
   { number: 15, name: 'Polish + docs', done: false },
@@ -135,7 +135,7 @@ export function StatusPage() {
     <div className="space-y-10">
       <section className="space-y-3">
         <p className="font-mono text-xs uppercase tracking-widest text-emerald-400/80">
-          Phase 9 — collaboration, history and restore
+          Phase 12 — collaboration, hardened, containerised
         </p>
         <h1 className="text-3xl font-semibold tracking-tight text-white">
           Real-time collaborative code editor

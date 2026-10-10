@@ -224,8 +224,12 @@ Checked at two points, both on the server:
   (`error: FORBIDDEN`). The read-only Monaco editor is a UX affordance; a viewer
   who opens a socket by hand is still refused. Tested.
 
-Not yet handled (Phase 10): a user removed, or a document deleted, _while_
-connected keeps their open socket until it reconnects.
+- **Over time (Phase 10):** a role change, removal or deletion makes every
+  instance re-check the affected sockets against PostgreSQL. A downgraded user
+  receives `{ type: 'role', role }` and their next edit is refused; a removed
+  user's socket is closed with `4003`, and everyone on a deleted document gets
+  `4004`. A 60-second periodic re-check is the safety net if the Redis
+  announcement is lost. See [security.md](security.md).
 
 ## Presence (Phase 7, §20)
 
@@ -290,12 +294,14 @@ DevTools, and the same envelope is published to Redis between instances
 If bandwidth ever mattered, switching the WebSocket to binary frames would not
 touch the CRDT logic.
 
-## Not built yet
+## Limits (Phase 11)
 
-| What                                           | Phase |
-| ---------------------------------------------- | ----- |
-| Revoking an open socket when access is removed | 10    |
-| Document size cap, per-connection message rate | 11    |
+- **Document size:** an update that would take the document over
+  `MAX_DOCUMENT_SIZE_BYTES` is refused before it is applied (`error:
+DOCUMENT_TOO_LARGE`); the client discards its local copy and re-syncs.
+- **Message rate:** a socket that exceeds its token bucket (40/s sustained,
+  burst 200) is closed with `4029`; the client reconnects and re-syncs through
+  state vectors, so nothing is lost. Details in [security.md](security.md).
 
 With several backend instances, each holds its own copy of an open document and
 they are kept in sync over Redis; how, and what happens when Redis is down, is in

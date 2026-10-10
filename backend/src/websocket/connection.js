@@ -12,6 +12,8 @@ import {
 import { encodeAwarenessUpdate } from 'y-protocols/awareness';
 import { WS_HEARTBEAT_INTERVAL_MS } from '../config/constants.js';
 import { logger } from '../utils/logger.js';
+import { env } from '../config/env.js';
+import { createTokenBucket } from '../security/token-bucket.js';
 
 /**
  * WebSocket connection lifecycle (§17, §21).
@@ -38,8 +40,9 @@ import { logger } from '../utils/logger.js';
  * @param {object} deps.hub              the collaboration hub
  * @param {object} deps.rooms            this server's connection registry
  * @param {number} deps.accessRecheckMs  periodic role re-check interval
+ * @param {{ perSecond: number, burst: number }} deps.messageRate  per-socket message limit
  */
-export async function handleConnection(ws, req, { hub, rooms, accessRecheckMs }) {
+export async function handleConnection(ws, req, { hub, rooms, accessRecheckMs, messageRate }) {
   // ── 1. Ticket ─────────────────────────────────────────────────────────
   const url = new URL(req.url, 'http://localhost');
   const ticket = url.searchParams.get('ticket');
@@ -181,7 +184,21 @@ export async function handleConnection(ws, req, { hub, rooms, accessRecheckMs })
     conn.isAlive = true;
   });
 
+  // Message flood protection (Phase 11): a token bucket per socket. Over the
+  // limit the socket is closed with a *retryable* code rather than messages
+  // being dropped: dropping an edit would make this client's document diverge,
+  // while a reconnect re-syncs through state vectors and loses nothing.
+  const messageBucket = createTokenBucket({
+    capacity: messageRate.burst,
+    refillPerSecond: messageRate.perSecond,
+  });
+
   ws.on('message', (rawData, isBinary) => {
+    if (!messageBucket.take()) {
+      logger.warn({ userId, documentId }, 'ws message rate exceeded — closing');
+      ws.close(WS_CLOSE_CODES.RATE_LIMITED, 'Too many messages');
+      return;
+    }
     if (isBinary) {
       sendToConnection(conn, {
         type: 'error',
@@ -290,12 +307,21 @@ function dispatchMessage(hub, conn, session, message) {
         }
         return;
       }
-      const applied = hub.applyClientUpdate(session, fromBase64(message.update), conn);
-      if (!applied) {
+      const result = hub.applyClientUpdate(session, fromBase64(message.update), conn);
+      if (result === 'invalid') {
         sendToConnection(conn, {
           type: 'error',
           code: 'INVALID_UPDATE',
           message: 'Update could not be decoded',
+        });
+      } else if (result === 'too-large') {
+        // Refused before applying, so the shared document is unchanged. The
+        // client must drop its local copy and re-sync, or it would keep showing
+        // (and re-sending on every reconnect) text nobody else has.
+        sendToConnection(conn, {
+          type: 'error',
+          code: 'DOCUMENT_TOO_LARGE',
+          message: `The document has reached its size limit (${Math.round(env.MAX_DOCUMENT_SIZE_BYTES / 1024)} KB); your last change was not saved.`,
         });
       }
       return;

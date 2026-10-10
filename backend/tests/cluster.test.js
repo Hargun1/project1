@@ -284,3 +284,20 @@ describe('access changes across instances (Phase 10)', () => {
     await alice.waitFor((m) => m.type === 'pong');
   });
 });
+
+describe('Redis unavailable at startup', () => {
+  it('an instance that started while Redis was down still receives access changes once it is up', async () => {
+    network.setUp(false);
+    const late = await startInstance('instance-late'); // its first subscribe attempt fails
+    network.setUp(true);
+
+    const received = [];
+    late.hub.events.on('access-changed', (change) => received.push(change));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    instances.A.hub.notifyAccessChanged(DOC_ID, BOB);
+
+    await eventually(() => received.some((c) => c.documentId === DOC_ID && c.userId === BOB));
+    await closeWebSocketServer(late.wss);
+    await new Promise((resolve) => late.server.close(resolve));
+  });
+});

@@ -27,7 +27,7 @@ working is worse than no control, because it stops anyone from looking for it.
 - `trust proxy` set to 1, so client IPs are correct behind Nginx (which matters
   for rate limiting later).
 
-## Implemented (Phases 2–9)
+## Implemented (Phases 2–10)
 
 - **bcrypt** password hashing (12 rounds); plaintext is never stored or logged.
 - **JWT access tokens** (15 min) and a **rotating refresh token** in an
@@ -68,14 +68,160 @@ working is worse than no control, because it stops anyone from looking for it.
   accepts only `#rrggbb` colours and integer client ids. Unit-tested with
   hostile names.
 
+- **Role-based access control (Phase 10):** one permission matrix
+  (`shared/src/permissions.js`) enforced on every REST request through
+  `access.service.js`, with roles read from PostgreSQL per request. Only the
+  OWNER manages members; OWNER can never be granted, changed or removed, so a
+  document always has exactly one owner; any other member may leave. Invites
+  require an existing account (no email delivery). Every role × action
+  combination is covered by route tests.
+- **Live revocation (Phase 10, §42):** access changes are announced on a Redis
+  channel and every instance re-checks the affected sockets against the
+  database (downgrade → `role` message and refused edits; removal → close
+  `4003`; deletion → close `4004`), plus a 60 s periodic re-check per socket.
+  Verified end to end across two real instances, and each mechanism was
+  mutation-checked.
+
+## Implemented (Phase 11: hardening)
+
+### Rate limiting (§28)
+
+| Limit                         | Key                | Default           | Where                                    |
+| ----------------------------- | ------------------ | ----------------- | ---------------------------------------- |
+| Auth endpoints                | client IP          | 20 / minute       | register, login, refresh, logout         |
+| Login attempts                | email (normalised) | 10 / 15 minutes   | login                                    |
+| Authenticated API             | user id            | 300 / minute      | everything under `/api/documents`        |
+| WebSocket connection attempts | client IP          | 30 / minute       | the HTTP upgrade, before a socket exists |
+| WebSocket messages            | the socket         | 40 / s, burst 200 | every inbound frame                      |
+
+All numbers are environment variables validated at startup (`RATE_LIMIT_*`,
+`WS_MESSAGES_PER_SECOND`, `WS_MESSAGE_BURST`).
+
+- **Shared across instances.** HTTP and connection counters live in Redis
+  (`INCR` + `PEXPIRE NX` in one `MULTI`), so spreading requests over several
+  backends does not multiply the allowance. Verified on two real instances.
+- **Fixed windows** for HTTP and connections (simple, explainable; a burst at a
+  window boundary can reach 2× briefly). A **token bucket** per socket for
+  messages: allows typing bursts, caps the sustained rate, needs no shared store.
+- **Responses:** `RateLimit-Limit/Remaining/Reset` on every limited request; a
+  refusal is `429` with `Retry-After` in the shared error envelope. Refused
+  WebSocket upgrades get a plain HTTP `429`.
+- **Message floods close the socket** with `4029` (retryable) rather than
+  dropping messages: a dropped edit would leave that client diverged, while a
+  reconnect re-syncs through state vectors and loses nothing.
+- **Client IP** comes from `X-Forwarded-For` exactly as far as
+  `TRUST_PROXY_HOPS` trusted proxies reach (default 1, for Nginx); entries further
+  left were written by the client and could be forged. HTTP and WebSocket use
+  the same rule.
+- **Fails open:** if Redis is unreachable, limits are not enforced and a warning
+  is logged, rather than refusing all traffic. (Login and refresh need Redis
+  anyway; the documents API keeps working.)
+
+### Document size cap (§12)
+
+`MAX_DOCUMENT_SIZE_BYTES` (default 1 MiB) is enforced in the collaboration hub
+**before** an update is applied, so a refused update never touches the shared
+document. Measuring the encoded document on every keystroke would be too
+expensive, so the hub keeps an estimate: exact after loading and after every
+save (at least every 10 s while editing), plus the size of each update since.
+The client receives `DOCUMENT_TOO_LARGE`, discards its local copy and re-syncs,
+so it cannot keep showing (or re-send) text nobody else has. Verified end to
+end: the update crossing the cap was refused and never reached the other
+instance. The 1 MiB WebSocket frame limit (`maxPayload`) remains as a transport
+guard.
+
+### CSRF strategy
+
+- Only `/api/auth/*` authenticates with a cookie (the refresh token). Every
+  other endpoint requires an `Authorization` header, which a foreign page cannot
+  make the browser add, so they are not CSRF-able by construction.
+- The refresh cookie is `HttpOnly`, `SameSite` (Strict in production) and
+  scoped to `Path=/api/auth`.
+- **Origin check:** every state-changing request to `/api/auth/*` whose `Origin`
+  is not the frontend (`CLIENT_URL`) is refused with 403. Requests without
+  `Origin` (non-browser clients) are allowed: they cannot carry a victim's cookie.
+- No CSRF tokens: with header-based auth plus the two layers above they would
+  add complexity without closing a remaining hole.
+
+### WebSocket abuse protection
+
+- Upgrades are handled manually (`noServer`): wrong path → 404, foreign `Origin`
+  → 403 (cross-site WebSocket hijacking), too many attempts → 429, all before a
+  socket is allocated.
+- Then ticket authentication, membership re-check, per-message validation,
+  per-message permissions, the message rate limit, the 1 MiB frame cap and the
+  document size cap.
+
+### Authentication fixes found during hardening
+
+- **Login timing leak:** an unknown email used to be answered instantly, a wrong
+  password after a ~250 ms bcrypt comparison, revealing which emails have
+  accounts despite identical messages. Unknown emails now pay for a comparison
+  against a dummy hash, which is created at startup (created lazily, the first
+  such login after each restart took 2×: measured 603 ms vs 322 ms). Measured
+  after the fix: 232 ms vs 240 ms.
+- **bcrypt's 72-byte limit:** bcrypt ignores everything after the first 72 bytes
+  of a password. Registration now rejects passwords over 72 UTF-8 bytes, and
+  login caps input at 1,024 characters.
+
+### Other
+
+- `Cache-Control: no-store` on every `/api` response (private data and tokens
+  must not be cached by browsers or proxies).
+- A resilience fix found while testing: an instance started while Redis was
+  down never subscribed to access-change announcements (ioredis only
+  re-subscribes channels that once subscribed successfully). The hub now
+  subscribes again every time Redis comes back. Regression test in
+  `cluster.test.js`.
+
+## Implemented (Phase 12: the edge)
+
+Nginx serves the page and is the only port browsers reach
+([nginx/security-headers.conf](../nginx/security-headers.conf)).
+
+**Content-Security-Policy** on the HTML page and its assets:
+
+```
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' data:; font-src 'self' data:; connect-src 'self';
+worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';
+frame-ancestors 'none'
+```
+
+- `script-src 'self'`: no inline scripts and no third-party script origins.
+  This is possible because Monaco is bundled rather than loaded from a CDN, and
+  Vite's production `index.html` contains no inline script.
+- `style-src 'unsafe-inline'` is the one relaxation: Monaco and the remote-cursor
+  colours inject `<style>` elements at runtime. Injected styles cannot run code;
+  the script policy stays strict.
+- `connect-src 'self'` covers `fetch` and the WebSocket (CSP Level 3 matches
+  `ws:`/`wss:` on the same host).
+- `frame-ancestors 'none'` (and `X-Frame-Options: DENY`) prevents clickjacking.
+- Verified in a real browser (headless Chrome) on the production build: two
+  users editing, Monaco and its workers running, **zero** CSP violations.
+
+Also: `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin`, `Permissions-Policy` (no camera, microphone,
+geolocation), `Cross-Origin-Opener-Policy: same-origin`, `server_tokens off`.
+
+**Coarse limits at the edge:** 30 requests/s per IP on `/api` (burst 60) and 50
+concurrent WebSockets per IP, answered in the API's JSON envelope. Deliberately
+generous; the precise user-, email- and socket-aware limits stay in the backend
+(Phase 11).
+
+**Network exposure:** the backends are reachable only on the Compose network;
+browsers reach Nginx alone. (PostgreSQL and Redis still publish their ports to
+the host for development tools; a cloud deployment would not.)
+
+**Images:** run as non-root (`node`), code owned by root, no dev tools or
+compilers in the runtime image, `.env` excluded from every build context.
+
 ## Planned, not implemented
 
-| Control                                                   | Phase |
-| --------------------------------------------------------- | ----- |
-| Member management; revoking an open socket on role change | 10    |
-| Rate limiting (REST, WS connections, WS messages; Redis)  | 11    |
-| `MAX_DOCUMENT_SIZE_BYTES` enforced on the Y.Doc           | 11    |
-| CSRF strategy write-up, Content-Security-Policy tuning    | 11    |
+| Control                                                     | Phase |
+| ----------------------------------------------------------- | ----- |
+| HTTPS at the load balancer, HSTS, `Secure` cookies over TLS | 14    |
+| Secrets from a secrets manager instead of an env file       | 14    |
 
 ## Standing rules
 

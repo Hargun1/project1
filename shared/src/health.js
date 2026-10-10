@@ -11,8 +11,9 @@
  *   GET /healthz -> 200
  *     { status: 'ok', service, version, uptimeSeconds, timestamp }
  *
- *   GET /readyz  -> 200 when ready, 503 when degraded (body is valid either way)
- *     { status: 'ready' | 'degraded',
+ *   GET /readyz  -> 200 when ready, 503 when degraded or draining (body is
+ *                   valid either way)
+ *     { status: 'ready' | 'degraded' | 'draining',   draining = shutting down
  *       checks: { database: DependencyState, redis: DependencyState },
  *       timestamp }
  *

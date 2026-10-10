@@ -209,6 +209,8 @@ export function createCollaborationHub({
           return;
         }
         Y.applyUpdate(session.ydoc, data, REDIS_ORIGIN);
+        // Peers enforced the cap on their own clients; only count the bytes here.
+        session.sizeEstimate += data.byteLength;
         if (message.type === 'sync-step2' && message.to === instanceId && session.awaitingPeers) {
           session.awaitingPeers.remaining -= 1;
           if (session.awaitingPeers.remaining === 0) session.awaitingPeers.done();
@@ -247,21 +249,28 @@ export function createCollaborationHub({
   // A role change, removal or deletion on any instance makes every instance
   // emit 'access-changed' locally; the WebSocket layer re-checks the matching
   // sockets against PostgreSQL.
-  if (bus) {
+  //
+  // The subscription is (re)made every time the bus comes up, not only once:
+  // if Redis is unavailable when this instance starts, the first attempt fails,
+  // and ioredis only re-subscribes channels that were once subscribed
+  // successfully. Subscribing again to an already-subscribed channel is harmless.
+  // (Found in Phase 11 when an instance was started during a Redis outage.)
+  const subscribeToAccessChanges = () =>
     bus
       .subscribe(ACCESS_CHANNEL, (raw) => {
         const message = parseAccessMessage(raw);
         if (!message || message.from === instanceId) return;
         events.emit('access-changed', { documentId: message.documentId, userId: message.userId });
       })
-      .catch((err) => logger.error({ err }, 'could not subscribe to access changes'));
-  }
+      .catch((err) => logger.warn({ err }, 'could not subscribe to access changes yet'));
 
   if (bus) {
+    void subscribeToAccessChanges();
     bus.on('status', (state) => {
       clusterState = state === 'up' ? 'ok' : 'degraded';
       events.emit('cluster', clusterState);
       if (state === 'up') {
+        void subscribeToAccessChanges();
         // Anything published while we were disconnected is gone. Ask for it.
         for (const session of sessions.values()) hello(session);
       }
@@ -289,6 +298,12 @@ export function createCollaborationHub({
       lastEditorId: null,
       needsCheckpoint: false,
       awaitingPeers: null,
+      // Size cap (Phase 11). Encoding the whole document on every keystroke to
+      // measure it would be too expensive, so this is an estimate: exact after
+      // loading and after every save, plus the size of every update since. An
+      // update cannot grow the state by more than about its own size, so the
+      // estimate errs on the large side and is corrected at the next save.
+      sizeEstimate: 0,
     };
 
     session.ready = (async () => {
@@ -300,6 +315,7 @@ export function createCollaborationHub({
       try {
         const state = await repo.getDocumentState(documentId);
         if (state) Y.applyUpdate(ydoc, state, LOAD_ORIGIN);
+        session.sizeEstimate = state?.byteLength ?? 0;
       } catch (err) {
         if (bus) await bus.unsubscribe(documentChannel(documentId));
         throw err;
@@ -356,6 +372,7 @@ export function createCollaborationHub({
     }
     // Snapshot synchronously: edits arriving during the write get their own save.
     const state = Y.encodeStateAsUpdate(session.ydoc);
+    session.sizeEstimate = state.byteLength; // re-measured exactly on every save
     const stateVector = Y.encodeStateVector(session.ydoc);
     session.dirty = false;
     session.firstDirtyAt = null;
@@ -553,17 +570,28 @@ export function createCollaborationHub({
      * Apply an update received from a client. Decoded fully *before* it is
      * applied, so a corrupt payload never touches the shared document.
      *
-     * @returns {boolean} false when the payload is not a valid Yjs update
+     * @returns {'ok' | 'invalid' | 'too-large'} 'invalid' when the payload is not
+     *   a valid Yjs update, 'too-large' when it would exceed the size cap
      */
     applyClientUpdate(session, update, origin) {
       try {
         Y.decodeUpdate(update);
       } catch {
-        return false;
+        return 'invalid';
+      }
+      // Size cap (§12, Phase 11), checked *before* applying so a refused update
+      // never touches the shared document.
+      if (session.sizeEstimate + update.byteLength > env.MAX_DOCUMENT_SIZE_BYTES) {
+        logger.warn(
+          { documentId: session.documentId, estimate: session.sizeEstimate },
+          'update refused: document size limit',
+        );
+        return 'too-large';
       }
       Y.applyUpdate(session.ydoc, update, origin);
+      session.sizeEstimate += update.byteLength;
       if (typeof origin?.userId === 'string') session.lastEditorId = origin.userId;
-      return true;
+      return 'ok';
     },
 
     /**

@@ -56,7 +56,28 @@ export const envSchema = z
      */
     DOC_REVISION_INTERVAL_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(300_000),
     /** Hard cap on a single document's Yjs state (Phase 11). */
-    MAX_DOCUMENT_SIZE_BYTES: z.coerce.number().int().positive().default(1_048_576),
+    MAX_DOCUMENT_SIZE_BYTES: z.coerce.number().int().min(1_024).max(16_777_216).default(1_048_576),
+
+    /**
+     * Reverse proxies in front of the app (Nginx = 1). Decides which
+     * X-Forwarded-For entry is the real client IP for rate limiting; too high
+     * lets clients forge their IP, too low makes every client look like the proxy.
+     */
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+
+    // ── Rate limits (Phase 11, §28). All per fixed window; see rate-limit.js. ──
+    /** Auth endpoints (register, login, refresh, logout), per client IP, per minute. */
+    RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().positive().max(10_000).default(20),
+    /** Login attempts per email address, per 15 minutes (slows guessing one account from many IPs). */
+    RATE_LIMIT_LOGIN_PER_EMAIL: z.coerce.number().int().positive().max(10_000).default(10),
+    /** Authenticated API requests per user, per minute. */
+    RATE_LIMIT_API_PER_MINUTE: z.coerce.number().int().positive().max(100_000).default(300),
+    /** WebSocket connection attempts per client IP, per minute. */
+    RATE_LIMIT_WS_CONNECT_PER_MINUTE: z.coerce.number().int().positive().max(10_000).default(30),
+    /** Sustained WebSocket messages per second, per connection (token bucket refill). */
+    WS_MESSAGES_PER_SECOND: z.coerce.number().int().positive().max(10_000).default(40),
+    /** Burst size of that token bucket. */
+    WS_MESSAGE_BURST: z.coerce.number().int().positive().max(100_000).default(200),
 
     /** Refresh session TTL in Redis, in seconds. Defaults to 7 days. */
     REFRESH_TOKEN_EXPIRY_SECONDS: z.coerce.number().int().positive().default(604_800),

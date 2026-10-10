@@ -27,17 +27,26 @@ healthRouter.get('/healthz', (_req, res) => {
  *
  * Answers 503 when degraded but still returns a *valid* body, because "which
  * dependency is down" is exactly what a caller needs to know.
+ *
+ * Also 503 (`draining`) once graceful shutdown has begun (Phase 12): the process
+ * is still alive and finishing its work, but a load balancer polling readiness
+ * must stop sending it new requests. `server.js` sets `app.locals.draining`.
  */
-healthRouter.get('/readyz', async (_req, res) => {
+healthRouter.get('/readyz', async (req, res) => {
   const [databaseUp, redisUp] = await Promise.all([
     checkDatabaseConnection(),
     checkRedisConnection(),
   ]);
 
-  const ready = databaseUp && redisUp;
+  const draining = req.app.locals.draining === true;
+  const ready = databaseUp && redisUp && !draining;
+
+  let status = 'ready';
+  if (draining) status = 'draining';
+  else if (!ready) status = 'degraded';
 
   res.status(ready ? 200 : 503).json({
-    status: ready ? 'ready' : 'degraded',
+    status,
     checks: {
       database: databaseUp ? 'up' : 'down',
       redis: redisUp ? 'up' : 'down',

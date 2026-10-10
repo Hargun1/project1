@@ -27,16 +27,25 @@
     "db:studio": "npm run db:studio --workspace @collab/backend",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
-    "infra:reset": "docker compose down -v"
+    "infra:reset": "docker compose down -v",
+    "stack:up": "docker compose --profile app up -d --build --wait",
+    "stack:down": "docker compose --profile app down",
+    "stack:logs": "docker compose --profile app logs -f --tail=100",
+    "stack:smoke": "node scripts/smoke-stack.mjs",
+    "stack:e2e": "node scripts/browser-e2e.mjs",
+    "test:integration": "npm run test:integration --workspace @collab/backend",
+    "test:coverage": "npm run test:coverage --workspace @collab/backend"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^9.17.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.16",
     "globals": "^15.14.0",
+    "playwright-core": "^1.49.1",
     "prettier": "^3.4.2"
   },
   "overrides": {

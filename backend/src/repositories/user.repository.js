@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../database/prisma.js';
 
 /**
@@ -17,18 +18,31 @@ const PUBLIC_SELECT = {
 };
 
 /**
+ * The unique index on `email` is the real guarantee of one account per address.
+ * The service checks first to answer quickly, but two simultaneous sign-ups
+ * both pass that check (bcrypt takes ~250 ms in between); the second insert then
+ * violates the index. That is reported as `null` and becomes a 409, not a 500
+ * (found by the Phase 13 integration tests).
+ *
  * @param {{ name: string, email: string, passwordHash: string }} data
- * @returns {Promise<object>} the created user (public fields only)
+ * @returns {Promise<object | null>} the created user (public fields only), or
+ *   null if the email is already taken
  */
 export async function createUser(data) {
-  return prisma.user.create({
-    data: {
-      name: data.name,
-      email: data.email,
-      passwordHash: data.passwordHash,
-    },
-    select: PUBLIC_SELECT,
-  });
+  try {
+    return await prisma.user.create({
+      data: {
+        name: data.name,
+        email: data.email,
+        passwordHash: data.passwordHash,
+      },
+      select: PUBLIC_SELECT,
+    });
+  } catch (err) {
+    // P2002 = unique constraint violation.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return null;
+    throw err;
+  }
 }
 
 /**

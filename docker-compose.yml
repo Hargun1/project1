@@ -1,11 +1,65 @@
-# Development infrastructure only.
+# Two ways to run the project:
 #
-# Phase 1 deliberately containerises just the dependencies a developer cannot
-# trivially run on the host (PostgreSQL, Redis). The application itself runs on
-# the host via `npm run dev:backend` / `npm run dev:frontend` for fast feedback.
-# Multi-stage app images, Nginx and the multi-instance topology arrive in Phase 12.
+#   docker compose up -d                       PostgreSQL + Redis only. The app runs
+#   (npm run infra:up)                         on the host with hot reload
+#                                              (npm run dev:backend / dev:frontend).
+#
+#   docker compose --profile app up -d --build The whole system in containers:
+#   (npm run stack:up)                         Nginx on :8080 serving the frontend
+#                                              and load-balancing two backend
+#                                              instances linked by Redis Pub/Sub,
+#                                              after a one-shot migration job.
+#
+#        browser ──► nginx :8080 ──► backend-1 ─┐
+#                       (static)  └► backend-2 ─┼─► redis (Pub/Sub, sessions, limits)
+#                                               └─► postgres (documents, revisions)
+#
+# Every value comes from the root .env; nothing secret is written here. The
+# stack runs the production images with NODE_ENV=production, so the backend
+# refuses to start while JWT_SECRET / JWT_REFRESH_SECRET hold the "change-me"
+# placeholders from .env.example (see README → "Run the whole stack in Docker").
 
 name: collab-editor
+
+# Shared by both backend instances.
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+    target: runtime
+  image: collab-editor-backend
+  profiles: [app]
+  restart: unless-stopped
+  # Tini as PID 1: forwards SIGTERM to Node and reaps zombies.
+  init: true
+  # server.js gives itself 10 s to close sockets and flush documents.
+  stop_grace_period: 15s
+  # Tuning knobs (rate limits, TTLs, secrets) come from .env ...
+  env_file:
+    - path: .env
+      required: false
+  # ... and these replace the host-development values for the container network.
+  environment:
+    NODE_ENV: production
+    PORT: 4000
+    LOG_LEVEL: ${STACK_LOG_LEVEL:-info}
+    # The browser's origin: used for CORS, the CSRF Origin check and the
+    # WebSocket Origin check. Must match the address in the address bar.
+    CLIENT_URL: ${STACK_CLIENT_URL:-http://localhost:8080}
+    DATABASE_URL: postgresql://${POSTGRES_USER:-collab}:${POSTGRES_PASSWORD:-collab_dev_password}@postgres:5432/${POSTGRES_DB:-collab_editor}?schema=public
+    REDIS_URL: redis://redis:6379
+    # Exactly one proxy (Nginx) in front.
+    TRUST_PROXY_HOPS: 1
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  # Not published: the only way in is through Nginx.
+  expose:
+    - '4000'
 
 services:
   postgres:
@@ -41,6 +95,49 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+
+  # Applies pending Prisma migrations once, then exits. Both backends wait for
+  # it to *succeed*, so no instance ever runs against an old schema, and two
+  # instances never race to migrate the same database.
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: build
+    image: collab-editor-migrate
+    profiles: [app]
+    restart: 'no'
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-collab}:${POSTGRES_PASSWORD:-collab_dev_password}@postgres:5432/${POSTGRES_DB:-collab_editor}?schema=public
+    command: ['npm', 'run', 'db:deploy', '--workspace', '@collab/backend']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend-1:
+    <<: *backend
+    # The hostname is part of the instance id in every log line, so the logs
+    # show which instance served which socket.
+    hostname: backend-1
+
+  backend-2:
+    <<: *backend
+    hostname: backend-2
+
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: collab-editor-web
+    profiles: [app]
+    restart: unless-stopped
+    ports:
+      - '${STACK_HTTP_PORT:-8080}:80'
+    depends_on:
+      backend-1:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
 
 volumes:
   postgres-data:

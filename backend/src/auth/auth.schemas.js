@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PASSWORD_MIN_LENGTH, NAME_MAX_LENGTH } from '@collab/shared';
+import { NAME_MAX_LENGTH, PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH } from '@collab/shared';
 
 /**
  * Zod schemas for authentication payloads (§10, §12).
@@ -22,7 +22,13 @@ export const registerSchema = z.object({
     .email('Invalid email address'),
   password: z
     .string({ required_error: 'Password is required' })
-    .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`),
+    .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
+    // bcrypt only uses the first 72 BYTES of a password and silently ignores the
+    // rest, so anything longer would give a false sense of strength. Bytes, not
+    // characters: an emoji is 4 bytes in UTF-8 (Phase 11).
+    .refine((value) => Buffer.byteLength(value, 'utf8') <= PASSWORD_MAX_BYTES, {
+      message: `Password must be at most ${PASSWORD_MAX_BYTES} bytes`,
+    }),
 });
 
 export const loginSchema = z.object({
@@ -31,5 +37,9 @@ export const loginSchema = z.object({
     .trim()
     .toLowerCase()
     .email('Invalid email address'),
-  password: z.string({ required_error: 'Password is required' }).min(1, 'Password is required'),
+  // Capped so an enormous body is never fed to bcrypt; generous for any real password.
+  password: z
+    .string({ required_error: 'Password is required' })
+    .min(1, 'Password is required')
+    .max(1_024, 'Password is too long'),
 });

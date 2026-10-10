@@ -1,4 +1,4 @@
-import { hashPassword, verifyPassword } from './password.service.js';
+import { hashPassword, verifyAgainstDummyHash, verifyPassword } from './password.service.js';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -36,6 +36,10 @@ export async function register(data) {
     email: data.email,
     passwordHash,
   });
+  if (!user) {
+    // Lost a race with a simultaneous registration for the same email.
+    throw AppError.conflict('An account with this email already exists');
+  }
 
   const accessToken = generateAccessToken(user);
   const { token: refreshToken, jti: refreshJti } = generateRefreshToken(user);
@@ -55,7 +59,11 @@ export async function register(data) {
 export async function login(data) {
   const user = await userRepo.findByEmail(data.email);
   if (!user) {
-    // Vague on purpose — never reveal whether the email exists.
+    // Vague on purpose — never reveal whether the email exists. The message alone
+    // is not enough: answering instantly here while a real account costs a
+    // ~250 ms bcrypt comparison would reveal existence through *timing*. So an
+    // unknown email pays for one comparison too (Phase 11).
+    await verifyAgainstDummyHash(data.password);
     throw AppError.unauthenticated('Invalid email or password');
   }
 

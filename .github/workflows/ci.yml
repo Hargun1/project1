@@ -52,3 +52,47 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Phase 12: build the production images and prove the whole stack works
+  # through Nginx — the same `docker compose` a developer runs locally.
+  docker:
+    name: Docker images + stack smoke test
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      # The smoke test uses yjs and the shared workspace from node_modules.
+      - name: Install dependencies
+        run: npm ci
+
+      # Throwaway secrets: the stack runs with NODE_ENV=production, which refuses
+      # the "change-me" placeholders from .env.example.
+      - name: Create .env
+        run: |
+          cp .env.example .env
+          sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
+          sed -i "s|^JWT_REFRESH_SECRET=.*|JWT_REFRESH_SECRET=$(openssl rand -hex 32)|" .env
+
+      - name: Build images and start the stack
+        run: docker compose --profile app up -d --build --wait --wait-timeout 180
+
+      - name: Smoke test through Nginx
+        run: npm run stack:smoke
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose --profile app logs --no-color --tail=200
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose --profile app down -v

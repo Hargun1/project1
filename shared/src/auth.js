@@ -33,6 +33,12 @@ export const REFRESH_COOKIE_NAME = 'collab_refresh';
 export const PASSWORD_MIN_LENGTH = 8;
 
 /**
+ * Maximum password length in UTF-8 *bytes*: bcrypt silently ignores everything
+ * after the first 72 bytes.
+ */
+export const PASSWORD_MAX_BYTES = 72;
+
+/**
  * Maximum name length enforced on both sides.
  */
 export const NAME_MAX_LENGTH = 100;

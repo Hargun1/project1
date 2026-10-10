@@ -10,19 +10,20 @@ server-side lock, edits are fanned out **across backend instances** with Redis
 Pub/Sub so the system scales horizontally, and document state is persisted as
 **binary Yjs snapshots** so a restored document keeps its merge history.
 
-> **Status: Phase 9 of 15 (Persistence + revisions) complete.** Accounts,
-> documents, the Monaco editor, ticket-authenticated WebSockets, real-time CRDT
-> editing, live presence and revision history with restore work end to end,
-> across **several backend instances** linked by Redis Pub/Sub, with documents
-> and revisions persisted as binary Yjs state in PostgreSQL. Member management,
-> rate limiting and the Nginx/Docker deployment are _not_ built yet. See
-> [Build phases](#build-phases).
+> **Status: Phase 12 of 15 (Docker + Nginx) complete.** Accounts, documents,
+> sharing with OWNER / EDITOR / VIEWER roles, the Monaco editor,
+> ticket-authenticated WebSockets, real-time CRDT editing, live presence and
+> revision history with restore work end to end, across **several backend
+> instances** linked by Redis Pub/Sub, with rate limiting, document size caps,
+> CSRF and WebSocket-origin checks. One command runs the whole system in Docker:
+> Nginx serving the app and load-balancing two backend instances. Cloud
+> deployment is _not_ built yet. See [Build phases](#build-phases).
 
 ## Architecture
 
 ```
                     ┌──────────────────────────────────┐
-   Browser ────────▶│  Nginx (Phase 12)                │
+   Browser ────────▶│  Nginx                           │
    React + Monaco   │  static assets · /api · /ws       │
                     └───────────────┬──────────────────┘
                                     │
@@ -102,6 +103,29 @@ tests instead:
 `TypeError` on an unknown one, because a typo there would silently produce an
 envelope the client rejects.
 
+## Run the whole stack in Docker
+
+The production images, two backend instances behind Nginx, PostgreSQL, Redis
+and a migration job, on one command:
+
+```bash
+cp .env.example .env
+# Production mode refuses the placeholder secrets. Set two different values:
+#   JWT_SECRET=<openssl rand -hex 32>
+#   JWT_REFRESH_SECRET=<openssl rand -hex 32>
+npm install            # only needed for the smoke test
+npm run stack:up       # build, start, wait until every container is healthy
+npm run stack:smoke    # 18 checks through Nginx, including cross-instance editing
+```
+
+Open <http://localhost:8080> in two browsers (or one normal and one private
+window), sign up as two users, share a document and type in both: Nginx's
+`least_conn` balancing puts the two sockets on different backend instances, and
+`npm run stack:logs` shows which instance served which user. Stop one instance
+with `docker compose stop backend-1` and keep typing: its users reconnect to the
+other instance. Details, failure tests and troubleshooting:
+[docs/deployment.md](docs/deployment.md).
+
 ## Requirements
 
 - Node.js **≥ 20.19** (developed on 24.x)
@@ -153,6 +177,11 @@ password is defined in exactly one place. The backend validates every variable
 with Zod at startup and exits with a readable list of problems rather than
 failing later with `undefined`.
 
+The security limits are variables too, with safe defaults: `RATE_LIMIT_*`,
+`WS_MESSAGES_PER_SECOND`, `WS_MESSAGE_BURST`, `MAX_DOCUMENT_SIZE_BYTES` and
+`TRUST_PROXY_HOPS` (how many reverse proxies' `X-Forwarded-For` entries to
+trust). `.env.example` lists them all with comments.
+
 ## Scripts
 
 | Command                | What it does                                         |
@@ -167,6 +196,10 @@ failing later with `undefined`.
 | `npm run infra:up`     | `docker compose up -d` (PostgreSQL + Redis)          |
 | `npm run infra:down`   | Stops the containers, keeps the volume               |
 | `npm run infra:reset`  | Stops the containers **and deletes the data volume** |
+| `npm run stack:up`     | Whole system in Docker on :8080, waits until healthy |
+| `npm run stack:smoke`  | Smoke test of the running stack through Nginx        |
+| `npm run stack:logs`   | Follows every container's logs                       |
+| `npm run stack:down`   | Stops the stack, keeps the data volume               |
 
 ## When Redis is unavailable
 
@@ -201,6 +234,7 @@ during a database blip.
 ```
 shared/                 Contracts shared across the trust boundary
   src/roles.js          ROLES + isRole guard (OWNER | EDITOR | VIEWER)
+  src/permissions.js    the permission matrix + can(role, action), used by both sides
   src/api.js            Error codes, envelope guards
   src/ws-messages.js    WebSocket message vocabulary, close/error codes
   src/encoding.js       base64 <-> Uint8Array for Yjs payloads in JSON
@@ -260,9 +294,23 @@ WebSocket tickets; role re-checked on every socket connection, with edits from
 viewers refused on the server; Zod validation of every WebSocket message.
 Details and test references: [docs/security.md](docs/security.md).
 
-Planned, and deliberately not claimed as working yet: member management and
-revoking an open socket (Phase 10), rate limiting and document size caps
-(Phase 11).
+Implemented in Phase 10: one permission matrix shared by server and UI,
+member management (invite, change role, remove, leave), and live revocation of
+open connections across instances.
+
+Implemented in Phase 11: rate limits shared across instances through Redis
+(auth per IP and per email, API per user, WebSocket connections per IP,
+messages per socket), the document size cap, an Origin check for CSRF and for
+WebSocket upgrades, a fix for a login timing leak, bcrypt's 72-byte limit, and
+`Cache-Control: no-store` on the API. Details: [docs/security.md](docs/security.md).
+
+Implemented in Phase 12: a strict Content-Security-Policy and security headers on
+the page, served by Nginx (no inline scripts, no third-party origins), coarse
+per-IP flood limits in Nginx in front of the backend's precise ones, and a
+`draining` readiness state during graceful shutdown.
+
+Planned, and deliberately not claimed as working yet: HTTPS and HSTS, which
+belong to the cloud deployment (Phase 14).
 
 ## Build phases
 
@@ -277,9 +325,9 @@ revoking an open socket (Phase 10), rate limiting and document size caps
 | 7   | Presence + awareness    | ✅ done |
 | 8   | Redis Pub/Sub scaling   | ✅ done |
 | 9   | Persistence + revisions | ✅ done |
-| 10  | Role-based access       | —       |
-| 11  | Security hardening      | —       |
-| 12  | Docker + Nginx          | —       |
+| 10  | Role-based access       | ✅ done |
+| 11  | Security hardening      | ✅ done |
+| 12  | Docker + Nginx          | ✅ done |
 | 13  | Testing                 | —       |
 | 14  | AWS + scaling proof     | —       |
 | 15  | Polish + documentation  | —       |

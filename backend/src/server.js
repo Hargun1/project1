@@ -4,10 +4,12 @@ import { SERVICE_NAME, SERVICE_VERSION } from './config/constants.js';
 import { logger } from './utils/logger.js';
 import { disconnectDatabase } from './database/prisma.js';
 import { hostname } from 'node:os';
-import { disconnectRedis } from './redis/redis.js';
+import { disconnectRedis, redis } from './redis/redis.js';
 import { createRedisBus } from './redis/pubsub.js';
 import { attachWebSocketServer, closeWebSocketServer } from './websocket/ws-server.js';
 import { createCollaborationHub } from './services/collaboration.service.js';
+import { createRedisRateLimitStore } from './security/rate-limit-store.js';
+import { warmUpPasswordHashing } from './auth/password.service.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -18,7 +20,12 @@ const bus = createRedisBus();
 const hub = createCollaborationHub({ bus, instanceId: `${hostname()}:${env.PORT}` });
 logger.info({ instance: hub.instanceId }, 'collaboration hub started');
 
-const app = createApp({ hub });
+// Rate-limit counters live in Redis so every instance enforces one shared limit.
+const rateLimitStore = createRedisRateLimitStore(redis);
+const app = createApp({ hub, rateLimitStore });
+
+// Login timing must not depend on whether this is the first login since boot.
+void warmUpPasswordHashing();
 
 const server = app.listen(env.PORT, () => {
   logger.info(
@@ -28,7 +35,7 @@ const server = app.listen(env.PORT, () => {
 });
 
 // The WebSocket server shares the HTTP server (and port) that Express uses.
-const wss = attachWebSocketServer(server, { hub });
+const wss = attachWebSocketServer(server, { hub, rateLimitStore });
 
 let shuttingDown = false;
 
@@ -48,6 +55,10 @@ async function shutdown(signal) {
   }
   shuttingDown = true;
   logger.info({ signal }, 'shutting down');
+
+  // 0. Report "not ready" from now on, so a load balancer polling /readyz stops
+  //    routing new requests here while the rest of the shutdown runs.
+  app.locals.draining = true;
 
   const forceExit = setTimeout(() => {
     logger.error({ signal }, 'graceful shutdown timed out, forcing exit');

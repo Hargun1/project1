@@ -9,6 +9,8 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.js",
+    "test:coverage": "vitest run --config vitest.coverage.config.js --coverage",
     "test:watch": "vitest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

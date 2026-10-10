@@ -36,7 +36,13 @@ export default [
 
   // ── Backend + shared: Node environment ──────────────────────────────────────
   {
-    files: ['backend/**/*.js', 'shared/**/*.js', '*.config.js', 'eslint.config.mjs'],
+    files: [
+      'backend/**/*.js',
+      'shared/**/*.js',
+      'scripts/**/*.mjs',
+      '*.config.js',
+      'eslint.config.mjs',
+    ],
     languageOptions: {
       globals: globals.node,
     },
@@ -98,6 +104,18 @@ export default [
       'no-implicit-coercion': 'error',
       'consistent-return': 'error',
     },
+  },
+
+  // ── Operational scripts: command-line tools whose output *is* the result ────
+  // After the project-wide rules, because in a flat config the later block wins.
+  {
+    files: ['scripts/**/*.mjs'],
+    rules: { 'no-console': 'off' },
+  },
+  // Callbacks passed to Playwright's page.evaluate run inside the browser.
+  {
+    files: ['scripts/browser-e2e.mjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
 
   prettier,

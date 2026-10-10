@@ -118,6 +118,8 @@ export const WS_ERROR_CODES = [
   'FORBIDDEN',
   /** The payload was well-formed base64 but Yjs could not apply it. */
   'INVALID_UPDATE',
+  /** The update would push the document over MAX_DOCUMENT_SIZE_BYTES; nothing was applied. */
+  'DOCUMENT_TOO_LARGE',
 ];
 
 /**
@@ -140,6 +142,8 @@ export const WS_CLOSE_CODES = {
   SERVER_SHUTDOWN: 4008,
   /** The document could not be loaded (e.g. PostgreSQL unavailable). Retryable. */
   DOCUMENT_UNAVAILABLE: 4009,
+  /** Too many messages from this socket (Phase 11). Retryable: reconnecting re-syncs. */
+  RATE_LIMITED: 4029,
 };
 
 /**

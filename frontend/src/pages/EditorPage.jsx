@@ -77,6 +77,12 @@ export function EditorPage() {
   const [protocolError, setProtocolError] = useState(null);
   /** 'degraded' while this backend cannot reach Redis, i.e. other instances (§43). */
   const [clusterState, setClusterState] = useState('ok');
+  /**
+   * Bumped to throw away the local Y.Doc and re-sync from the server (Phase 11):
+   * when the server refuses an edit (size limit), the local copy contains text
+   * nobody else has and would re-send it on every reconnect.
+   */
+  const [syncGeneration, setSyncGeneration] = useState(0);
 
   const role = doc?.role;
   // Every UI decision uses the same permission matrix the server enforces.
@@ -132,7 +138,10 @@ export function EditorPage() {
       onRoleChange: (nextRole) =>
         setDoc((current) => (current ? { ...current, role: nextRole } : current)),
       onSynced: () => setSynced(true),
-      onError: setProtocolError,
+      onError: (error) => {
+        setProtocolError(error);
+        if (error.code === 'DOCUMENT_TOO_LARGE') setSyncGeneration((n) => n + 1);
+      },
     });
 
     return () => {
@@ -141,7 +150,7 @@ export function EditorPage() {
       nextDoc.destroy();
       setCollab(null);
     };
-  }, [docLoaded, documentId, getAccessToken]);
+  }, [docLoaded, documentId, getAccessToken, syncGeneration]);
 
   // ── Monaco ⇄ Y.Text binding ──────────────────────────────────────────
   useEffect(() => {

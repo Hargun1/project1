@@ -154,11 +154,20 @@ export function connectClient(
   };
 }
 
-/** Poll until `check()` is truthy — for convergence that arrives over the network. */
+/**
+ * Poll until `check()` is truthy — for convergence that arrives over the network.
+ * Synchronous checks only: a Promise is always truthy, so an async check would
+ * "pass" without checking anything. It throws instead (integration tests have
+ * `until` for async checks).
+ */
 export async function eventually(check, timeoutMs = 2000) {
   const started = Date.now();
   for (;;) {
-    if (check()) return;
+    const result = check();
+    if (result instanceof Promise) {
+      throw new TypeError('eventually() takes a synchronous check; use until() for async ones');
+    }
+    if (result) return;
     if (Date.now() - started > timeoutMs) throw new Error('condition not met in time');
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

@@ -55,18 +55,12 @@ export async function consumeTicket(ticket) {
 
   const key = `${TICKET_PREFIX}${ticket}`;
 
-  // GETDEL: get the value and delete the key in one round-trip.
-  // Available since Redis 6.2. Falls back to GET + DEL if unavailable.
-  let raw;
-  try {
-    raw = await redis.getdel(key);
-  } catch {
-    // Fallback for older Redis versions without GETDEL
-    raw = await redis.get(key);
-    if (raw !== null) {
-      await redis.del(key);
-    }
-  }
+  // GETDEL (Redis ≥ 6.2; the project pins Redis 7): read and delete in one
+  // atomic command. There used to be a GET + DEL fallback for any GETDEL error;
+  // it was removed in Phase 13 because it is not atomic — two racing handshakes
+  // could both read the ticket before either deleted it — and it hid errors
+  // that should fail the handshake instead.
+  const raw = await redis.getdel(key);
 
   if (raw === null) {
     return null;

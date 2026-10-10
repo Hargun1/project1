@@ -1,7 +1,7 @@
 # Scaling
 
-> **Implemented: Phase 8 (cross-instance collaboration over Redis Pub/Sub).**
-> Running the instances behind Nginx is Phase 12; deploying them to AWS is
+> **Implemented: Phase 8 (cross-instance collaboration over Redis Pub/Sub),
+> Phase 12 (two instances behind Nginx in Docker).** Deploying them to AWS is
 > Phase 14.
 
 ## Why the design scales at all
@@ -88,6 +88,7 @@ Exact behaviour, verified by stopping the Redis container mid-session:
 | Persistence                      | Continues, merge-on-save. PostgreSQL ends up with the union of both sides. Nothing is overwritten.                                |
 | New WebSocket connections        | Fail: tickets are stored in Redis. Clients keep retrying with backoff.                                                            |
 | Login / token refresh            | Fail: refresh sessions are in Redis. Existing access tokens keep working until they expire (15 min).                              |
+| Rate limits                      | Not enforced: the limiter fails open instead of refusing all traffic. A warning is logged.                                        |
 | `/readyz`                        | `503 degraded`, so a load balancer stops sending _new_ traffic to the instance.                                                   |
 | When Redis returns               | Each instance re-subscribes, sends a hello, and the diverged copies reconcile **without clients reconnecting**. The badge clears. |
 
@@ -102,8 +103,19 @@ dependency for authentication; it is not one for document integrity.
 
 ## Running two instances locally
 
-Until Phase 12 adds Nginx, start the instances on two ports and connect clients
-to each directly. `PORT` from the environment wins over `.env`.
+**Behind Nginx (Phase 12):** `npm run stack:up` starts `backend-1` and
+`backend-2` behind Nginx on <http://localhost:8080>. Nginx balances with
+`least_conn`, so two browsers end up on different instances; the backend logs
+name the instance for every socket. Load balancing, failover and the measured
+behaviour are in [deployment.md](deployment.md#load-balancing).
+
+What the load balancer does **not** need: sticky sessions. Any instance can
+serve any document, because instances share edits through Redis and state
+through PostgreSQL. A reconnecting client may land on a different instance and
+simply re-syncs through the state-vector handshake.
+
+**Without Docker:** start the instances on two ports and connect clients to each
+directly. `PORT` from the environment wins over `.env`.
 
 ```bash
 # Git Bash / macOS / Linux

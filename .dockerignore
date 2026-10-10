@@ -1,0 +1,18 @@
+# Keep the build context small and secret-free. The Dockerfiles COPY only what
+# they need, but everything not ignored here is still sent to the Docker daemon.
+**/node_modules
+**/dist
+**/coverage
+.git
+.github
+.claude
+.vscode
+.idea
+docs
+**/*.log
+
+# Secrets never enter an image: containers get their configuration from the
+# environment at run time.
+.env
+.env.*
+!.env.example

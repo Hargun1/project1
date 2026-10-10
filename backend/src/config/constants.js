@@ -32,6 +32,13 @@ export const WS_TICKET_PREFIX = 'ws_ticket:';
 export const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
+ * On shutdown, how long clients get to answer the close frame before their
+ * sockets are terminated (Phase 12). Well inside the 10 s shutdown budget, so
+ * flushing documents always runs.
+ */
+export const WS_CLOSE_GRACE_MS = 2_000;
+
+/**
  * How often an open socket re-reads its role from PostgreSQL (Phase 10).
  * Access changes are pushed instantly through Redis; this is the safety net
  * that bounds how long a revocation can be missed if that message is lost.

@@ -26,6 +26,8 @@ export const API_ERROR_CODES = [
   'PAYLOAD_TOO_LARGE',
   'RATE_LIMITED',
   'INTERNAL_ERROR',
+  /** Produced by Nginx, not the backend: no backend instance could answer (Phase 12). */
+  'SERVICE_UNAVAILABLE',
 ];
 
 /**
