@@ -250,10 +250,29 @@ try {
   await bob.page.goto(`${BASE}/dashboard`);
   await bob.page.getByRole('link', { name: newName }).first().waitFor({ timeout: 10_000 });
   const dashboardOverflows = await overflows();
+  // Name the culprits: the innermost elements whose right edge passes the screen.
+  const culprits = dashboardOverflows
+    ? await bob.page.evaluate(() =>
+        [...document.querySelectorAll('body *')]
+          .filter((el) => el.getBoundingClientRect().right > window.innerWidth + 0.5)
+          .filter(
+            (el) =>
+              ![...el.children].some(
+                (c) => c.getBoundingClientRect().right > window.innerWidth + 0.5,
+              ),
+          )
+          .slice(0, 4)
+          .map(
+            (el) =>
+              `${el.tagName.toLowerCase()}[${Math.round(el.getBoundingClientRect().right)}px] "${(el.textContent ?? '').trim().slice(0, 30)}"`,
+          )
+          .join('; '),
+      )
+    : '';
   check(
     'on a 390 px screen the editor and dashboard need no horizontal scrolling',
     !editorOverflows && !dashboardOverflows,
-    `editor ${editorOverflows}, dashboard ${dashboardOverflows}`,
+    `editor ${editorOverflows}, dashboard ${dashboardOverflows}${culprits ? `: ${culprits}` : ''}`,
   );
 
   // ── Browser health ─────────────────────────────────────────────────────────
