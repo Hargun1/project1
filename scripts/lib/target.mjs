@@ -17,3 +17,25 @@ export const IS_LOCAL = ['localhost', '127.0.0.1'].includes(new URL(BASE).hostna
 if (IS_LOCAL && BASE.startsWith('https:')) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
+
+/**
+ * Print one check's result. In GitHub Actions a failure is also emitted as an
+ * `::error::` annotation, so the failing check is visible on the run page (and
+ * through the public API) without opening the logs.
+ *
+ * @param {string} label
+ * @param {boolean} ok
+ * @param {string} [detail]
+ * @returns {boolean} ok
+ */
+export function report(label, ok, detail = '') {
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  (${detail})` : ''}`);
+  if (!ok && process.env.GITHUB_ACTIONS === 'true') {
+    const message = `${label}${detail ? ` (${detail})` : ''}`
+      .replace(/%/g, '%25')
+      .replace(/\r/g, '%0D')
+      .replace(/\n/g, '%0A');
+    console.log(`::error::${message}`);
+  }
+  return ok;
+}

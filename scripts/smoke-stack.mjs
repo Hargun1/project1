@@ -14,11 +14,11 @@
 
 import * as Y from 'yjs';
 import { fromBase64, toBase64, YDOC_TEXT_KEY } from '@collab/shared';
-import { BASE, IS_LOCAL, WS_BASE } from './lib/target.mjs';
+import { BASE, IS_LOCAL, WS_BASE, report } from './lib/target.mjs';
 
 let failures = 0;
 function check(label, ok, detail = '') {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  (${detail})` : ''}`);
+  report(label, ok, detail);
   if (!ok) failures += 1;
 }
 

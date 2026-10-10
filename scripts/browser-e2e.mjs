@@ -16,7 +16,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright-core';
-import { BASE, IS_LOCAL } from './lib/target.mjs';
+import { BASE, IS_LOCAL, report } from './lib/target.mjs';
 
 const PASSWORD = 'correct-horse-battery';
 
@@ -31,7 +31,7 @@ const CHROME_CANDIDATES = [
 
 let failures = 0;
 function check(label, ok, detail = '') {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  (${detail})` : ''}`);
+  report(label, ok, detail);
   if (!ok) failures += 1;
 }
 
@@ -296,6 +296,9 @@ try {
       `alice: ${[...aliceOn]} / bob: ${[...bobOn]}`,
     );
   }
+} catch (err) {
+  // A step that throws (e.g. a selector that never appears) is a failure too.
+  check('the run finished without an unexpected error', false, err.message.split(/\r?\n/)[0]);
 } finally {
   await browser.close();
 }
