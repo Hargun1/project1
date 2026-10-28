@@ -1,4 +1,4 @@
-# Temporary demo: free Postgres expires after 30 days; free web services sleep.
+# Free web services sleep. Neon credentials are configured on the web service.
 # Serve React, REST and WebSockets on one origin to preserve secure auth cookies.
 services:
   - type: web
@@ -24,9 +24,9 @@ services:
       - key: JWT_REFRESH_SECRET
         generateValue: true
       - key: DATABASE_URL
-        fromDatabase:
-          name: collab-editor-hargun-db
-          property: connectionString
+        sync: false
+      - key: DATABASE_URL_UNPOOLED
+        sync: false
       - key: REDIS_URL
         fromService:
           type: keyvalue
@@ -39,6 +39,7 @@ services:
     maxmemoryPolicy: noeviction
     ipAllowList: []
 databases:
+  # Retain the original database until its data and the Neon cutover are verified.
   - name: collab-editor-hargun-db
     region: singapore
     plan: free

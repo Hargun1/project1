@@ -10,6 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // One .env at the monorepo root serves the app, docker compose and Vite. There is
 // no build step any more, so this path is always src/config → repository root.
 // A missing file is fine: in containers the values come from the environment.
+dotenv.config({ path: path.resolve(here, '../../../.env.local') });
 dotenv.config({ path: path.resolve(here, '../../../.env') });
 
 function loadEnv() {
