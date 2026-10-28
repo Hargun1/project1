@@ -14,7 +14,12 @@ dotenv.config({ path: path.resolve(here, '../../../.env') });
 
 function loadEnv() {
   try {
-    return parseEnv(process.env);
+    return parseEnv({
+      ...process.env,
+      CLIENT_URL:
+        process.env.CLIENT_URL ||
+        (process.env.RENDER === 'true' ? process.env.RENDER_EXTERNAL_URL : undefined),
+    });
   } catch (error) {
     if (error instanceof ZodError) {
       // The logger is configured *from* env, so this is the one place that has to

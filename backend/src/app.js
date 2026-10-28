@@ -16,6 +16,7 @@ import { rateLimit } from './middleware/rate-limit.js';
 import { requireTrustedOrigin } from './middleware/trusted-origin.js';
 import { createMemoryRateLimitStore } from './security/rate-limit-store.js';
 import { originOf } from './security/origin.js';
+import { attachFrontend } from './frontend.js';
 
 /**
  * Builds the Express application.
@@ -119,6 +120,8 @@ export function createApp({ hub, rateLimitStore = createMemoryRateLimitStore() }
     }),
   );
   app.use('/api/documents', createDocumentRouter({ perUser }));
+
+  if (env.SERVE_FRONTEND) attachFrontend(app);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

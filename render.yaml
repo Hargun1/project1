@@ -1,0 +1,47 @@
+# Temporary demo: free Postgres expires after 30 days; free web services sleep.
+# Serve React, REST and WebSockets on one origin to preserve secure auth cookies.
+services:
+  - type: web
+    name: collab-editor-hargun
+    runtime: node
+    region: singapore
+    plan: free
+    buildCommand: npm ci --include=dev && npm run db:generate && npm run build
+    # Free services have no pre-deploy step. Apply migrations before listening.
+    startCommand: npm run db:deploy && node backend/src/server.js
+    healthCheckPath: /readyz
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - key: NODE_ENV
+        value: production
+      - key: SERVE_FRONTEND
+        value: 'true'
+      - key: TRUST_PROXY_HOPS
+        value: '1'
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: collab-editor-hargun-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: collab-editor-hargun-redis
+          property: connectionString
+  - type: keyvalue
+    name: collab-editor-hargun-redis
+    region: singapore
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+databases:
+  - name: collab-editor-hargun-db
+    region: singapore
+    plan: free
+    databaseName: collab_editor
+    postgresMajorVersion: '17'
+    ipAllowList: []

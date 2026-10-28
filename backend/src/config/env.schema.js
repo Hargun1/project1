@@ -26,6 +26,10 @@ export const envSchema = z
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
 
     CLIENT_URL: z.string().url('CLIENT_URL must be an absolute URL, e.g. http://localhost:5173'),
+    SERVE_FRONTEND: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
 
     DATABASE_URL: z
       .string()
